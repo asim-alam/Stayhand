@@ -1,0 +1,11 @@
+.env
+node_modules/
+*.log
+.next/
+data/*.sqlite
+data/*.sqlite-*
+docs/
+plan*.md
+PLAN*.md
+progress.md
+Hackathon.md

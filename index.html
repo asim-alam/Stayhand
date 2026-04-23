@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Second Thought</title>
+    <meta
+      name="description"
+      content="Second Thought is a friction operations web app for live connectors, MCP surfaces, and intervention workflows."
+    />
+    <link rel="stylesheet" href="./css/design-system.css" />
+    <link rel="stylesheet" href="./css/animations.css" />
+    <link rel="stylesheet" href="./css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <div class="app-shell">
+      <aside class="app-sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark">II</div>
+          <div>
+            <div class="brand-title">Second Thought</div>
+            <div class="brand-subtitle">FRICTION OPS</div>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Workspace</div>
+          <button class="sidebar-tab active" data-view="overview">Overview</button>
+          <button class="sidebar-tab" data-view="live-surface">Live Surface</button>
+          <button class="sidebar-tab" data-view="connectors">Connectors</button>
+          <button class="sidebar-tab" data-view="context-bus">Context Bus</button>
+          <button class="sidebar-tab" data-view="studio">Studio</button>
+          <button class="sidebar-tab" data-view="ledger">Ledger</button>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">System posture</div>
+          <div class="sidebar-card">
+            <div class="sidebar-metric-label">Connected surfaces</div>
+            <div id="metric-connected" class="sidebar-metric-value">0</div>
+          </div>
+          <div class="sidebar-card">
+            <div class="sidebar-metric-label">Queued risk moments</div>
+            <div id="metric-events" class="sidebar-metric-value">0</div>
+          </div>
+          <div class="sidebar-card">
+            <div class="sidebar-metric-label">Average quotient</div>
+            <div id="metric-quotient" class="sidebar-metric-value">0</div>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Armed agents</div>
+          <div id="agent-list" class="agent-list"></div>
+        </div>
+      </aside>
+
+      <main class="app-frame">
+        <header class="app-topbar">
+          <div>
+            <div id="workspace-kicker" class="workspace-kicker">THE EYE-INSPIRED WEB APP</div>
+            <h1 id="workspace-title" class="workspace-title">Live friction orchestration across connected tools.</h1>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="status-pill" id="stream-status">stream offline</div>
+            <button class="btn btn-ghost" id="simulate-active">Simulate live event</button>
+            <button class="btn btn-primary" id="analyze-selection">Analyze selection</button>
+          </div>
+        </header>
+
+        <section class="command-deck glass-elevated">
+          <div class="command-header">
+            <div>
+              <div class="command-label">Command deck</div>
+              <div class="command-title">Ask what deserves friction right now.</div>
+            </div>
+            <div class="command-context" id="command-context">No selection yet.</div>
+          </div>
+          <div class="command-controls">
+            <input
+              id="command-input"
+              class="input"
+              placeholder="e.g. What should happen to the current Slack thread?"
+            />
+            <button class="btn btn-primary" id="run-command">Run</button>
+          </div>
+          <div id="command-presets" class="command-presets"></div>
+          <div id="command-response" class="command-response">
+            Select an event or connector to generate a friction-aware recommendation.
+          </div>
+        </section>
+
+        <section id="view-overview" class="app-view active"></section>
+        <section id="view-live-surface" class="app-view"></section>
+        <section id="view-connectors" class="app-view"></section>
+        <section id="view-context-bus" class="app-view"></section>
+        <section id="view-studio" class="app-view"></section>
+        <section id="view-ledger" class="app-view"></section>
+      </main>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

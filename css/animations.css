@@ -1,0 +1,229 @@
+/* ===================================================================
+   SECOND THOUGHT — Animations & Keyframes
+=================================================================== */
+
+/* ─── Entrance Animations ───────────────────────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in-down {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(30px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Looping Animations ────────────────────────────────────────── */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes rotate-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50%       { transform: scale(1.04); opacity: 1; }
+}
+
+/* ─── Scan Animation (Lab Mode) ─────────────────────────────────── */
+@keyframes scan-sweep {
+  0%   { left: -4px; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+.scan-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    var(--cyan) 30%,
+    var(--cyan) 70%,
+    transparent 100%
+  );
+  box-shadow: 0 0 20px var(--cyan), 0 0 40px var(--cyan-glow);
+  animation: scan-sweep 2.5s ease-in-out forwards;
+  z-index: 10;
+}
+.scan-track {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+/* ─── Heat Pulse (Kiln Mode) ────────────────────────────────────── */
+@keyframes heat-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(232, 162, 74, 0.4); }
+  70%  { box-shadow: 0 0 0 16px rgba(232, 162, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 162, 74, 0); }
+}
+@keyframes danger-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(231, 111, 81, 0.5); }
+  70%  { box-shadow: 0 0 0 20px rgba(231, 111, 81, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(231, 111, 81, 0); }
+}
+.heat-pulse       { animation: heat-pulse 1.5s ease-out infinite; }
+.danger-pulse     { animation: danger-pulse 1s ease-out infinite; }
+
+/* ─── Hold Button Fill ──────────────────────────────────────────── */
+@keyframes hold-fill {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+.hold-progress {
+  position: absolute;
+  bottom: 0; left: 0; height: 3px;
+  background: var(--sage);
+  border-radius: var(--radius-full);
+  width: 0;
+}
+.holding .hold-progress {
+  animation: hold-fill 2s linear forwards;
+}
+
+/* ─── Typing Effect ─────────────────────────────────────────────── */
+@keyframes type-in {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+/* ─── Number Counting ───────────────────────────────────────────── */
+.count-up { display: inline-block; }
+
+/* ─── Green Halo (Apology fast-lane) ────────────────────────────── */
+@keyframes halo-expand {
+  0%   { box-shadow: 0 0 0 0 rgba(46,155,106,0.6); }
+  60%  { box-shadow: 0 0 0 20px rgba(46,155,106,0); }
+  100% { box-shadow: 0 0 0 0 rgba(46,155,106,0); }
+}
+.apology-halo { animation: halo-expand 0.8s var(--ease-out-expo); }
+
+/* ─── Weight Wobble (heavy send button) ─────────────────────────── */
+@keyframes weight-wobble {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25%  { transform: translateY(2px) rotate(-0.5deg); }
+  75%  { transform: translateY(2px) rotate(0.5deg); }
+}
+.weight-wobble { animation: weight-wobble 0.6s ease-in-out; }
+
+/* ─── Friction Modal Entrance ───────────────────────────────────── */
+@keyframes friction-slide-in {
+  0%   { opacity: 0; transform: translateY(40px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.friction-entrance { animation: friction-slide-in 0.5s var(--ease-spring) forwards; }
+
+/* ─── Prescription Card Stamp ───────────────────────────────────── */
+@keyframes stamp {
+  0%   { transform: scale(2) rotate(-10deg); opacity: 0; }
+  60%  { transform: scale(0.95) rotate(1deg); opacity: 1; }
+  80%  { transform: scale(1.03) rotate(-0.5deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.stamp-in { animation: stamp 0.6s var(--ease-spring) forwards; }
+
+/* ─── Particle Pulse ─────────────────────────────────────────────── */
+@keyframes particle-drift {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50%  { opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+}
+
+/* ─── Glitch Effect (for "the problem" section) ─────────────────── */
+@keyframes glitch {
+  0%, 90%, 100% { transform: translate(0); }
+  91% { transform: translate(-2px, 1px); }
+  92% { transform: translate(2px, -1px); }
+  93% { transform: translate(-1px, 2px); }
+}
+.glitch { animation: glitch 5s ease-in-out infinite; }
+
+/* ─── Streaming Text (Quarry AI response) ───────────────────────── */
+@keyframes token-appear {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.token { display: inline; animation: token-appear 0.15s ease; }
+
+/* ─── MRI Data Points Appear ────────────────────────────────────── */
+@keyframes data-point-in {
+  from { r: 0; opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ─── Cooling Drawer Slide ───────────────────────────────────────── */
+@keyframes drawer-open {
+  from { max-height: 0; opacity: 0; }
+  to   { max-height: 200px; opacity: 1; }
+}
+.cooling-drawer {
+  overflow: hidden;
+  animation: drawer-open 0.4s var(--ease-out-expo) forwards;
+}
+
+/* ─── Steel Man Reveal ───────────────────────────────────────────── */
+@keyframes steel-man-in {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.steel-man-reveal { animation: steel-man-in 0.5s var(--ease-out-expo); }
+
+/* ─── Socratic Question Cards ────────────────────────────────────── */
+@keyframes question-pop {
+  0%   { opacity: 0; transform: scale(0.8) translateY(10px); }
+  70%  { transform: scale(1.02) translateY(-2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.question-pop {
+  animation: question-pop 0.5s var(--ease-spring) both;
+}
+.question-pop:nth-child(1) { animation-delay: 0.1s; }
+.question-pop:nth-child(2) { animation-delay: 0.25s; }
+.question-pop:nth-child(3) { animation-delay: 0.4s; }
+
+/* ─── Gradient Shimmer Text ──────────────────────────────────────── */
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.gradient-text {
+  background: linear-gradient(
+    135deg,
+    var(--amber) 0%,
+    var(--coral) 30%,
+    var(--indigo) 60%,
+    var(--cyan) 100%
+  );
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient-shift 4s ease infinite;
+}
+
+/* ─── Risk Score Bar ─────────────────────────────────────────────── */
+@keyframes risk-fill {
+  from { width: 0%; }
+}
+.risk-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  animation: risk-fill 0.8s var(--ease-out-expo);
+  transition: width 0.4s var(--ease-out-expo);
+}
