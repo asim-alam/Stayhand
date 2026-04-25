@@ -1,195 +1,203 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { MessageOutcome } from "@/lib/real-mode/types";
+import type { StayhandMoment } from "@/lib/real-mode/types";
+import { AuthControl } from "@/components/shared/auth-control";
+
+type FilterSurface = "all" | "reply" | "send" | "buy";
 
 export function OutcomesDashboard() {
-  const [outcomes, setOutcomes] = useState<MessageOutcome[]>([]);
+  const [moments, setMoments] = useState<StayhandMoment[]>([]);
+  const [filter, setFilter] = useState<FilterSurface>("all");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void fetch("/api/outcomes", { cache: "no-store" })
+    setLoading(true);
+    const url = filter === "all" ? "/api/moments" : `/api/moments?surface=${filter}`;
+    
+    void fetch(url, { cache: "no-store" })
       .then(async (res) => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to load outcomes.");
-        setOutcomes(data.outcomes || []);
+        if (!res.ok) throw new Error(data.error || "Failed to load moments.");
+        setMoments(data.moments || []);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load outcomes."))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load moments."))
       .finally(() => setLoading(false));
-  }, []);
+  }, [filter]);
 
-  if (loading) {
-    return <div className="demo-shell"><div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>Loading outcomes...</div></div>;
+  if (loading && moments.length === 0) {
+    return (
+      <div className="marketing-page">
+        <div style={{ padding: "100px", textAlign: "center", color: "var(--muted)" }}>
+          <div className="eyebrow" style={{ marginBottom: 12 }}>Stayhand</div>
+          <h2>Loading your history...</h2>
+        </div>
+      </div>
+    );
   }
 
-  const hasOutcomes = outcomes.length > 0;
+  const hasMoments = moments.length > 0;
 
-  // Calculate metrics
-  const totalCoached = outcomes.length;
-  const suggestionsUsed = outcomes.filter(o => o.user_action === "used_try").length;
-  const suggestionsEdited = outcomes.filter(o => o.user_action === "edited_try").length;
-  const suggestionsDismissed = outcomes.filter(o => o.user_action === "dismissed" || o.user_action === "sent_original").length;
+  // Calculate metrics for current view
+  const total = moments.length;
+  const improvedCount = moments.filter(m => 
+    (m.heat_after !== null && m.heat_before !== null && m.heat_after < m.heat_before) ||
+    m.user_action === "used_try" || 
+    m.status === "cooled"
+  ).length;
   
-  const heatReducedCount = outcomes.filter(o => o.heat_after < o.heat_before).length;
-  const apologiesImproved = outcomes.filter(o => o.reply_type.includes("apology")).length;
+  const suggestionsUsed = moments.filter(m => m.user_action === "used_try" || m.user_action === "edited_try").length;
   
-  const avgHeatBefore = totalCoached ? Math.round(outcomes.reduce((sum, o) => sum + o.heat_before, 0) / totalCoached) : 0;
-  const avgHeatAfter = totalCoached ? Math.round(outcomes.reduce((sum, o) => sum + o.heat_after, 0) / totalCoached) : 0;
-
   return (
     <main className="marketing-page">
-      <header className="site-header" style={{ position: "sticky", top: 0, zIndex: 100, borderBottom: "1px solid var(--border)", background: "rgba(10,10,10,0.8)", backdropFilter: "blur(12px)" }}>
-        <div className="site-header__brand" style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <a href="/" className="site-header__brand-link" style={{ textDecoration: 'none' }}>
-            <img src="/logo.png" alt="" style={{ width: 24, height: 24, marginRight: 8, borderRadius: 4, verticalAlign: 'middle', boxShadow: '0 0 24px rgba(240, 161, 58, 0.12)' }} />
+      <header className="site-header" style={{ position: "sticky", top: 0, zIndex: 100 }}>
+        <div className="site-header__brand">
+          <a href="/" className="site-header__brand-link">
+            <img src="/logo.png" alt="" style={{ width: 24, height: 24, marginRight: 8, borderRadius: 4 }} />
             <span><span style={{ color: 'var(--amber)' }}>Stay</span>hand</span>
           </a>
-          <span className="eyebrow" style={{ margin: 0, paddingLeft: 16, borderLeft: "1px solid var(--border)" }}>Reply Mode</span>
         </div>
         
         <div style={{ flex: 1, display: "flex", flexDirection: "column", marginLeft: 32 }}>
-          <strong style={{ fontSize: "0.95rem" }}>Message Outcomes</strong>
-          <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>A history of your coached moments</span>
+          <strong style={{ fontSize: "0.95rem" }}>{filter === "all" ? "All" : filter.charAt(0).toUpperCase() + filter.slice(1)} Outcomes</strong>
+          <span style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>History of intentional friction</span>
         </div>
 
         <nav className="site-header__nav">
-          <a href="/reply" className="button ghost" style={{ fontSize: "0.85rem" }}>← Back to conversations</a>
+          <AuthControl />
+          <a href="/reply" className="button ghost" style={{ fontSize: "0.8rem" }}>Back to app</a>
         </nav>
       </header>
 
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "60px 24px" }}>
-        <section style={{ marginBottom: 60 }}>
-          <div className="eyebrow" style={{ color: "var(--amber)", marginBottom: 16 }}>✓ Coaching Results</div>
-          <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "2.5rem", fontWeight: 400, letterSpacing: "-0.02em", marginBottom: 16 }}>
-            See what changed before you sent.
+        <section style={{ marginBottom: 48 }}>
+          <div className="eyebrow" style={{ marginBottom: 16 }}>✓ Coaching Dashboard</div>
+          <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "3rem", fontWeight: 400, letterSpacing: "-0.03em", marginBottom: 20 }}>
+            The moments that mattered.
           </h1>
-          <p style={{ fontSize: "1.1rem", color: "var(--muted)", maxWidth: 600, lineHeight: 1.6 }}>
-            Every coached draft, Try suggestion, and final message appears here so you can see how Stayhand reduced friction.
-          </p>
+          
+          {/* Surface Filters */}
+          <div style={{ display: "flex", gap: 10, marginTop: 32 }}>
+            {(["all", "reply", "send", "buy"] as FilterSurface[]).map(s => (
+              <button
+                key={s}
+                onClick={() => setFilter(s)}
+                className={`button ${filter === s ? "primary" : "ghost"}`}
+                style={{ padding: "8px 16px", borderRadius: "999px", fontSize: "0.8rem" }}
+              >
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
         </section>
 
-        {error && <span style={{ display: "inline-block", color: "var(--coral)", background: "rgba(231,111,81,0.1)", padding: "4px 12px", borderRadius: 4, fontSize: "0.85rem", marginBottom: 24, border: "1px solid rgba(231,111,81,0.2)" }}>Error: {error}</span>}
-
-      {hasOutcomes ? (
-        <>
-          <section className="stats-strip" style={{ marginBottom: 60 }}>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: "var(--amber)" }}>{totalCoached}</div>
-              <div className="stat-label">Moments coached</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: "var(--sage)" }}>{heatReducedCount}</div>
-              <div className="stat-label">Messages cooled down</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: "var(--indigo)" }}>{suggestionsUsed + suggestionsEdited}</div>
-              <div className="stat-label">Suggestions used/edited</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: avgHeatAfter < avgHeatBefore ? "var(--sage)" : "var(--muted)" }}>{avgHeatBefore} → {avgHeatAfter}</div>
-              <div className="stat-label">Avg heat reduction</div>
-            </div>
-          </section>
-
-          <section className="insight-section" style={{ marginBottom: 40, padding: 24, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
-            <h3 style={{ fontSize: "1rem", marginBottom: 12, color: "var(--amber)" }}>What Stayhand noticed</h3>
-            <ul style={{ paddingLeft: 20, color: "var(--muted)", margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-              {heatReducedCount > 0 && <li>You successfully cooled down {heatReducedCount} message{heatReducedCount > 1 ? "s" : ""} after coaching.</li>}
-              {suggestionsDismissed > 0 && <li>You dismissed {suggestionsDismissed} suggestion{suggestionsDismissed > 1 ? "s" : ""}, but still received feedback on your drafts.</li>}
-              {apologiesImproved > 0 && <li>The coach helped improve {apologiesImproved} apolog{apologiesImproved > 1 ? "ies" : "y"}.</li>}
-              {totalCoached < 3 && <li>Complete more coached moments to see deeper patterns.</li>}
-            </ul>
-          </section>
-
-          <div className="outcomes-timeline" style={{ marginBottom: 60 }}>
-            <h3 style={{ fontSize: "1.1rem", marginBottom: 24, fontFamily: "var(--font-serif)", fontWeight: 400 }}>Friction Timeline</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, borderLeft: "1px solid var(--border)", paddingLeft: 24, marginLeft: 8 }}>
-              {outcomes.map(item => (
-                <div key={`timeline-${item.id}`} style={{ fontSize: "0.95rem", color: "var(--muted)", position: "relative" }}>
-                  <div style={{ position: "absolute", left: "-28.5px", top: "6px", width: "8px", height: "8px", borderRadius: "50%", background: "var(--amber)", boxShadow: "0 0 10px var(--amber)" }} />
-                  <strong style={{ color: "var(--foreground)" }}>{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong> &middot; {item.other_person_name} &middot; {item.issue_type === "none" ? "Routine check" : item.issue_type.replace(/_/g, " ")} &middot; {item.user_action.replace(/_/g, " ")}
-                </div>
-              ))}
-            </div>
+        {error && (
+          <div style={{ padding: "16px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: 12, marginBottom: 32, color: "#fca5a5" }}>
+            <strong>Error loading outcomes:</strong> {error}
           </div>
+        )}
 
-          <div className="results-list" style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-            <h3 style={{ fontSize: "1.3rem", fontFamily: "var(--font-serif)", fontWeight: 400 }}>Recent Outcomes</h3>
-            {outcomes.map((item, i) => (
-              <article
-                key={item.id}
-                className="thesis-card animate-in"
-                style={{ animationDelay: `${i * 100}ms` }}
-              >
-                <div className="row spread" style={{ marginBottom: 24 }}>
-                  <div>
-                    <span className="eyebrow" style={{ display: "block", marginBottom: 4 }}>Conversation: {item.other_person_name}</span>
-                    <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-                      {new Date(item.timestamp).toLocaleString()} &middot; Heat: <strong style={{ color: item.heat_before > 60 ? "var(--coral)" : "inherit" }}>{item.heat_before}</strong>
+        {hasMoments ? (
+          <>
+            <section className="stats-strip" style={{ marginBottom: 48, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20 }}>
+              <div className="stat-card" style={{ background: "rgba(255,255,255,0.03)", padding: "24px", borderRadius: "16px", border: "1px solid var(--border)" }}>
+                <div className="stat-value" style={{ color: "var(--amber)", fontSize: "2rem", fontWeight: 700 }}>{total}</div>
+                <div className="stat-label" style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)", marginTop: 4 }}>Total Moments</div>
+              </div>
+              <div className="stat-card" style={{ background: "rgba(255,255,255,0.03)", padding: "24px", borderRadius: "16px", border: "1px solid var(--border)" }}>
+                <div className="stat-value" style={{ color: "var(--sage)", fontSize: "2rem", fontWeight: 700 }}>{improvedCount}</div>
+                <div className="stat-label" style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)", marginTop: 4 }}>Improved Outcomes</div>
+              </div>
+              <div className="stat-card" style={{ background: "rgba(255,255,255,0.03)", padding: "24px", borderRadius: "16px", border: "1px solid var(--border)" }}>
+                <div className="stat-value" style={{ color: "var(--indigo)", fontSize: "2rem", fontWeight: 700 }}>{suggestionsUsed}</div>
+                <div className="stat-label" style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)", marginTop: 4 }}>Suggestions Used</div>
+              </div>
+            </section>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+              {moments.map((moment, i) => (
+                <article
+                  key={moment.id}
+                  className="thesis-card animate-in"
+                  style={{ 
+                    animationDelay: `${i * 50}ms`,
+                    padding: "24px",
+                    background: "rgba(20,20,22,0.6)",
+                    borderRadius: "20px",
+                    border: "1px solid var(--border)",
+                    display: "grid",
+                    gap: 20
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <span className="eyebrow" style={{ color: "var(--amber)", fontSize: "0.65rem" }}>{moment.surface} &middot; {moment.status}</span>
+                      <h3 style={{ margin: "4px 0", fontSize: "1.25rem", fontFamily: "var(--font-serif)" }}>{moment.title}</h3>
+                      <time style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{new Date(moment.created_at).toLocaleString()}</time>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {moment.trigger_reason && (
+                        <span style={{ padding: "4px 10px", borderRadius: "999px", background: "rgba(232, 162, 74, 0.1)", border: "1px solid rgba(232, 162, 74, 0.2)", color: "var(--amber)", fontSize: "0.7rem", fontWeight: 600 }}>
+                          {moment.trigger_reason}
+                        </span>
+                      )}
+                      <span style={{ padding: "4px 10px", borderRadius: "999px", background: "rgba(255,255,255,0.05)", border: "1px solid var(--border)", color: "var(--muted)", fontSize: "0.7rem" }}>
+                        {moment.user_action.replace(/_/g, " ")}
+                      </span>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {item.warning_badge && <span className="status-pill" style={{ background: "rgba(231, 111, 81, 0.1)", color: "var(--coral)", fontSize: "0.75rem", border: "1px solid rgba(231, 111, 81, 0.2)" }}>{item.warning_badge}</span>}
-                    <span className="status-pill" style={{ fontSize: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid var(--border)" }}>{item.reply_type.replace(/_/g, " ")}</span>
-                  </div>
-                </div>
 
-                <div className="stack" style={{ gap: 24 }}>
-                  <div className="note" style={{ background: "rgba(240, 161, 58, 0.05)", padding: 20, borderRadius: 12, borderLeft: "2px solid var(--amber)" }}>
-                    <strong style={{ display: "block", marginBottom: 8, color: "var(--amber)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.5px" }}>AI Review</strong>
-                    <span style={{ fontSize: "1.05rem", lineHeight: 1.5 }}>{item.ai_review}</span>
-                  </div>
-
-                  <div className="diff-view" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                    <div>
-                      <strong style={{ display: "block", marginBottom: 12, fontSize: "0.85rem", color: "var(--muted)" }}>Original draft</strong>
-                      <div style={{ padding: 20, background: "rgba(255,255,255,0.02)", borderRadius: 12, fontSize: "1rem", color: "var(--muted)", textDecoration: "line-through", border: "1px solid var(--border)" }}>
-                        {item.user_draft}
-                      </div>
-                    </div>
-                    <div>
-                      <strong style={{ display: "block", marginBottom: 12, fontSize: "0.85rem", color: "var(--sage)" }}>Final sent message</strong>
-                      <div style={{ padding: 20, background: "rgba(42, 157, 143, 0.05)", borderRadius: 12, fontSize: "1rem", border: "1px solid rgba(42, 157, 143, 0.2)" }}>
-                        {item.final_sent_message}
-                      </div>
-                    </div>
-                  </div>
-
-                  {item.try_message && (
-                    <div>
-                      <strong style={{ display: "block", marginBottom: 12, fontSize: "0.85rem", color: "var(--indigo)" }}>AI Suggestion</strong>
-                      <div style={{ padding: 20, background: "rgba(63, 114, 175, 0.05)", borderRadius: 12, fontSize: "1rem", border: "1px solid rgba(63, 114, 175, 0.2)", fontStyle: "italic" }}>
-                        {item.try_message}
-                      </div>
+                  {moment.ai_review && (
+                    <div style={{ padding: "16px", background: "rgba(70, 166, 119, 0.05)", borderRadius: "12px", borderLeft: "3px solid var(--sage)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+                      {moment.ai_review}
                     </div>
                   )}
 
-                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: "0.9rem", color: "var(--muted)" }}>Outcome: <strong style={{ color: "var(--foreground)" }}>{item.user_action.replace(/_/g, " ")}</strong></span>
-                    <div className="row" style={{ gap: 16 }}>
-                      <a href={`/reply?conversation=${item.conversation_id}`} className="top-link subtle" style={{ fontSize: "0.85rem" }}>View conversation →</a>
-                      <button className="top-link subtle" style={{ fontSize: "0.85rem", background: "none", border: "none", cursor: "pointer" }} onClick={() => navigator.clipboard.writeText(item.final_sent_message)}>Copy final message</button>
-                    </div>
+                  <div style={{ display: "grid", gridTemplateColumns: moment.final_output ? "1fr 1fr" : "1fr", gap: 20 }}>
+                    {moment.original_input && (
+                      <div>
+                        <span className="eyebrow" style={{ fontSize: "0.6rem", display: "block", marginBottom: 8, opacity: 0.6 }}>Initial Draft</span>
+                        <div style={{ fontSize: "0.85rem", color: "var(--muted)", padding: "12px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                          {moment.original_input}
+                        </div>
+                      </div>
+                    )}
+                    {moment.final_output && (
+                      <div>
+                        <span className="eyebrow" style={{ fontSize: "0.6rem", display: "block", marginBottom: 8, opacity: 0.6 }}>Final Action</span>
+                        <div style={{ fontSize: "0.85rem", color: "var(--foreground)", padding: "12px", background: "rgba(42, 157, 143, 0.05)", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.2)" }}>
+                          {moment.final_output}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </>
-      ) : (
-        <section className="thesis-card animate-in" style={{ padding: "40px", border: "1px dashed var(--border)", background: "transparent", textAlign: "left" }}>
-          <div className="eyebrow" style={{ marginBottom: 12 }}>empty state</div>
-          <h2 style={{ fontSize: "1.5rem", marginBottom: 12 }}>No coached moments yet.</h2>
-          <p style={{ color: "var(--muted)", marginBottom: 24, maxWidth: 500 }}>
-            When Stayhand reviews a draft, suggests a Try line, or helps cool down a message, the outcome will appear here.
-          </p>
-          <div className="row" style={{ gap: 16 }}>
-            <a href="/reply" className="button primary">Start a conversation</a>
-            <a href="/demo/reply" className="button ghost">Run demo scenario</a>
-          </div>
-        </section>
-      )}
+
+                  {moment.ai_suggestion && moment.user_action !== "sent_original" && (
+                    <div style={{ marginTop: 8 }}>
+                      <span className="eyebrow" style={{ fontSize: "0.6rem", display: "block", marginBottom: 8, color: "var(--indigo)" }}>Stayhand Suggestion</span>
+                      <div style={{ fontSize: "0.9rem", fontStyle: "italic", color: "var(--text)", padding: "12px", background: "rgba(63, 114, 175, 0.05)", borderRadius: "8px", border: "1px solid rgba(63, 114, 175, 0.1)" }}>
+                        &ldquo;{moment.ai_suggestion}&rdquo;
+                      </div>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          </>
+        ) : (
+          <section style={{ padding: "80px 40px", border: "1px dashed var(--border)", borderRadius: "24px", textAlign: "center" }}>
+            <div className="eyebrow" style={{ marginBottom: 16 }}>Empty History</div>
+            <h2 style={{ fontSize: "1.5rem", marginBottom: 12 }}>No moments found in {filter}.</h2>
+            <p style={{ color: "var(--muted)", marginBottom: 32, maxWidth: 460, margin: "0 auto 32px" }}>
+              Intentional friction hasn't been applied to this mode yet. Start using Stayhand to see your outcomes here.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <a href="/reply" className="button primary">Go to Reply Mode</a>
+              <a href="/send" className="button ghost">Go to Send Mode</a>
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );

@@ -212,7 +212,38 @@ function buildUserBehaviourSummary(context: ReplyCoachMessage[]): string {
   return `${parts.join(", ")}.`;
 }
 
-function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPayload, replyType: ReplyType): string {
+// Vague one-liners that carry no specific intent
+const VAGUE_DRAFTS = ["what do you mean", "ok", "okay", "huh", "explain", "tell me", "really", "sure", "fine", "what"];
+
+function isMeaningfulRewrite(draft: string, tryMessage: string, issueType: ReplyIssueType): boolean {
+  const d = draft.trim().toLowerCase();
+  const t = tryMessage.trim().toLowerCase();
+  if (!t || t === d) return false;
+  if (issueType === "too_vague" || issueType === "misses_question" || issueType === "unclear") {
+    if (t.length <= d.length + 12) return false;
+    const addedWords = contentWords(tryMessage).filter((w) => !contentWords(draft).includes(w));
+    return addedWords.length >= 3;
+  }
+  return true;
+}
+
+function reconcileCoachLabels(result: ReplyAnalyzeResult): ReplyAnalyzeResult {
+  const next = { ...result };
+  const tryIsQuestion = next.try_message.trim().endsWith("?");
+  // Fix contradictory reply_type
+  if (tryIsQuestion && next.reply_type === "direct_answer") next.reply_type = "clarification";
+  if (next.try_message && !tryIsQuestion && next.reply_type === "question") next.reply_type = "other";
+  // Fix contradictory verdict
+  if (next.issue_type !== "none" && next.verdict === "good") next.verdict = "needs_improvement";
+  if (next.warning_badge && next.verdict === "good") next.verdict = "needs_improvement";
+  // Add missing badge for vague issues
+  if (next.issue_type === "too_vague" && !next.warning_badge) next.warning_badge = "needs more clarity";
+  if (next.issue_type === "too_aggressive" && !next.warning_badge) next.warning_badge = "tone may escalate";
+  if (next.issue_type === "misses_question" && !next.warning_badge) next.warning_badge = "misses the question";
+  return next;
+}
+
+function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPayload, replyType: ReplyType, issueType: ReplyIssueType): string {
   const draft = payload.user_draft.message.trim();
   const latest = payload.latest_incoming_message?.message.trim() || "";
   const lowerDraft = lc(draft);
@@ -221,8 +252,19 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
 
   if (!draft) return "";
 
+  // For vague drafts when there is a latest incoming message, generate a grounded clarifying question
+  const isVagueDraft = VAGUE_DRAFTS.some((v) => lowerDraft === v || lowerDraft.replace(/[?.!]+$/, "") === v);
+  if ((isVagueDraft || draft.length < 16) && latest) {
+    // Extract a topic fragment from the latest message to ground the question
+    const topicWords = contentWords(latest).slice(0, 3).join(" ");
+    if (topicWords) {
+      return `What part about ${topicWords} do you want me to clarify first? I can explain what I know.`;
+    }
+    return `Can you tell me which part you need me to explain? I want to make sure I answer the right thing.`;
+  }
+
   if (replyType === "apology" || APOLOGY_PATTERNS.some((pattern) => lowerDraft.includes(pattern))) {
-    return draft.replace(/\but\b.*/i, "").trim(); // Cut off "but..." justifications in an apology
+    return draft.replace(/\bbut\b.*/i, "").trim();
   }
 
   if (HOT_PATTERNS.some((pattern) => lowerDraft.includes(pattern))) {
@@ -231,6 +273,12 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
       .replace(/\byou never\b/gi, "this still isn't happening")
       .replace(/\bi can't believe\b/gi, "I'm frustrated that")
       .replace(/\byou don't care\b/gi, "it feels like this isn't landing");
+  }
+
+  // For too_vague / misses_question issues, never return an unchanged draft
+  if ((issueType === "too_vague" || issueType === "misses_question") && latest) {
+    const firstQ = latest.split(/[.!?]/)[0]?.trim() || latest.slice(0, 60);
+    return `I hear you — ${firstQ.toLowerCase()}. Let me give you a clearer answer.`;
   }
 
   return draft;
@@ -279,7 +327,7 @@ export function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeR
 
   heat = clamp(heat, 0, 100);
   const heatLabel = heatScoreToLabel(heat);
-  const tryMessage = buildFallbackTryMessage(input, payload, replyType);
+  const tryMessage = buildFallbackTryMessage(input, payload, replyType, issueType);
   const warningBadge = issueType === "none"
     ? null
     : issueType === "too_aggressive"
@@ -353,16 +401,24 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
     ),
     "",
     "Instructions:",
-    "1. Infer the reply_type from the conversation. Do not default to apology, softening, or a question.",
-    "2. The Try message must be a better version of the user's draft, not a new topic.",
-    "3. Do not invent facts, excuses, reasons, arguments, promises, or background not present in the payload.",
-    "4. If the conversation is tense, reduce friction without erasing the user's point.",
-    "5. Do not make the user overly apologetic unless the context clearly calls for an apology.",
-    "6. The AI Review must name the actual issue in this conversation. Avoid generic coaching text.",
-    "7. Never use these phrases or close variations: 'raised something specific', 'make sure your reply directly addresses what they said', 'may not address what they actually said'.",
-    "8. The warning_badge, heat label, reply_type, ai_review, verdict, issue_type, and try_message must agree with each other.",
-    "9. risk_score is a 0-100 app meter that must agree with heat: calm is usually 0-34, rising is usually 35-69, tense is usually 70-100.",
-    "10. The why_appeared string should be exactly 2-4 words explaining the trigger (e.g., 'High heat detected', 'Off-topic drift').",
+    "1. You are a message coach inside Stayhand. Your only job is to help the signed-in user send a better message in THIS exact conversation — not a generic one.",
+    "2. The Try message must be a clearly improved version of the user's draft. It must not simply repeat the draft.",
+    "3. If the draft is vague (e.g. 'what do you mean', 'ok', 'huh'), the Try must be a specific question or answer grounded in the latest incoming message.",
+    "4. Do not invent facts, excuses, reasons, arguments, promises, or background NOT present in the conversation payload.",
+    "5. Infer reply_type from the conversation. Do not default to apology.",
+    "6. If Try is a question, reply_type must be 'question' or 'clarification' — NOT 'direct_answer'.",
+    "7. If Try gives an answer, reply_type should be 'direct_answer' or 'explanation'.",
+    "8. The AI Review must name the actual issue in THIS conversation. Avoid all generic text.",
+    "9. NEVER use these phrases: 'raised something specific', 'make sure your reply directly addresses', 'may not address what they actually said'.",
+    "10. The warning_badge, heat label, reply_type, ai_review, verdict, issue_type, and try_message must all agree with each other.",
+    "11. If issue_type is not 'none', verdict must be 'needs_improvement'.",
+    "12. If warning_badge is non-null, verdict must be 'needs_improvement'.",
+    "13. Before returning, internally verify: Does try_message respond to the latest_incoming_message? Is try_message clearly better than user_draft? Are reply_type and try_message consistent?",
+    "",
+    "Bad example:",
+    "User draft: 'what do you mean' / Try: 'what do you mean' — REJECTED. Try must improve.",
+    "Good example:",
+    "User draft: 'what do you mean' / latest incoming: 'okay tell me what you know' / Try: 'What part do you want me to explain first? I can tell you what I know.'",
     "",
     "Return ONLY valid JSON with this exact shape:",
     JSON.stringify({
@@ -429,7 +485,7 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
     ? parsed.risk_factors.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 3)
     : fallback.risk_factors;
 
-  return {
+  const normalized = reconcileCoachLabels({
     reply_type: replyType,
     verdict,
     heat_label: heatLabel,
@@ -453,7 +509,8 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
     heat_trajectory: computeHeatTrajectory(normalizeCoachPayload(input).conversation_context),
     bot_context_hint: typeof parsed.bot_context_hint === "string" ? parsed.bot_context_hint.trim() : fallback.bot_context_hint,
     other_party_state: typeof parsed.other_party_state === "string" ? parsed.other_party_state.trim() : fallback.other_party_state,
-  };
+  });
+  return normalized;
 }
 
 function validateCoachResult(input: ReplyAnalyzeRequest, result: ReplyAnalyzeResult): string[] {
@@ -464,7 +521,15 @@ function validateCoachResult(input: ReplyAnalyzeRequest, result: ReplyAnalyzeRes
   const tryMessage = result.try_message;
   const review = lc(result.ai_review);
 
-  if (!result.ai_review.trim()) errors.push("ai_review is empty");
+  // Reject if Try is meaninglessly similar to draft for quality-sensitive issue types
+  const qualityIssues: ReplyIssueType[] = ["too_vague", "misses_question", "unclear", "contradicts_context"];
+  if (qualityIssues.includes(result.issue_type) && !isMeaningfulRewrite(draft, tryMessage, result.issue_type)) {
+    errors.push(`try_message is not a meaningful improvement over the draft for issue_type '${result.issue_type}'`);
+  }
+  // Reject if Try literally equals draft (always)
+  if (tryMessage.trim().toLowerCase() === draft.trim().toLowerCase()) {
+    errors.push("try_message is identical to the user draft");
+  }
   if (!tryMessage.trim()) errors.push("try_message is empty");
   if (BANNED_REVIEW_PHRASES.some((phrase) => review.includes(phrase))) {
     errors.push("ai_review uses banned generic review text");
@@ -513,6 +578,10 @@ function validateCoachResult(input: ReplyAnalyzeRequest, result: ReplyAnalyzeRes
     }
   }
 
+  if (!isMeaningfulRewrite(draft, tryMessage, result.issue_type)) {
+    errors.push("try_message is not a meaningful rewrite of the user draft");
+  }
+
   return errors;
 }
 
@@ -536,10 +605,10 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
       const { parsed, model } = await generateJson<RawCoachResponse>({
         prompt,
         temperature: attempt === 0 ? 0.25 : 0.15,
-        timeoutMs: 10000,
+        timeoutMs: 30000,
       });
       lastModel = model;
-      const result = normalizeCoachResponse(input, parsed, fallback);
+      const result = reconcileCoachLabels(normalizeCoachResponse(input, parsed, fallback));
       const validationErrors = validateCoachResult(input, result);
       if (!validationErrors.length) {
         return { result, live: true, model };
@@ -556,5 +625,5 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
     }
   }
 
-  return { result: fallback, live: false, model: lastModel };
+  return { result: reconcileCoachLabels(fallback), live: false, model: lastModel };
 }

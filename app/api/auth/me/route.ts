@@ -7,6 +7,9 @@ export const runtime = "nodejs";
 export async function GET() {
   const cookieStore = await cookies();
   const token = cookieStore.get(REPLY_SESSION_COOKIE)?.value;
-  const user = getReplyUserBySession(token);
-  return NextResponse.json({ user, session: user ? token : null });
+  const user = await getReplyUserBySession(token);
+  return NextResponse.json(
+    { user, session: user ? token : null },
+    { headers: { "Cache-Control": "no-store, max-age=0" } }
+  );
 }

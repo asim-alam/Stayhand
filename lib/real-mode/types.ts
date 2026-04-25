@@ -61,6 +61,7 @@ export interface ReplyCoachMessage {
   message: string;
   timestamp?: string;
   heat?: number;
+  is_latest_incoming?: boolean;
 }
 
 /** A single message in the conversation thread passed to the AI. */
@@ -179,4 +180,23 @@ export interface MessageOutcome {
   final_sent_message: string;
   user_action: UserActionType;
   outcome_summary: string;
+}
+
+export interface StayhandMoment {
+  id: string;
+  user_id: string | null;
+  anonymous_session_id: string | null;
+  surface: "reply" | "send" | "buy";
+  created_at: string;
+  title: string;
+  status: "completed" | "dismissed" | "cooled" | "abandoned";
+  trigger_reason: string | null;
+  heat_before: number | null;
+  heat_after: number | null;
+  original_input: string | null;
+  ai_review: string | null;
+  ai_suggestion: string | null;
+  final_output: string | null;
+  user_action: string;
+  payload_json: string;
 }

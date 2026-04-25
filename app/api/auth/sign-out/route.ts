@@ -7,7 +7,13 @@ export const runtime = "nodejs";
 export async function POST() {
   const cookieStore = await cookies();
   const token = cookieStore.get(REPLY_SESSION_COOKIE)?.value;
-  clearReplySession(token);
-  cookieStore.delete(REPLY_SESSION_COOKIE);
+  await clearReplySession(token);
+  cookieStore.set(REPLY_SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+    expires: new Date(0),
+  });
   return NextResponse.json({ ok: true });
 }

@@ -37,12 +37,11 @@ export default function MarketingPage() {
       {/* ── Hero ─────────────────────────── */}
       <section className="landing-hero">
         <div className="hero-copy">
-          <div className="eyebrow">⏸ A position on friction</div>
           <h1>
             <DynamicHeroTitle />
           </h1>
           <p>
-            We spent a decade removing friction. Faster payments. Smoother interfaces.
+            For the last decade, every app has been designed to remove friction. Faster payments. Smoother interfaces.
             Instant everything. Then came the scams, the regret, the messages you can&apos;t unsend.
             Stayhand adds one intelligent pause — at the exact moment your brain is about to go on autopilot.
           </p>
@@ -112,7 +111,7 @@ export default function MarketingPage() {
             <p>{SURFACE_META[scenario.surface].oneLiner}</p>
             <div className="row" style={{ marginTop: 4 }}>
                 <a href={`/${scenario.surface}`} className="button primary">
-                Try {SURFACE_META[scenario.surface].label} →
+                  Try {SURFACE_META[scenario.surface].label} →
               </a>
               <a href={`/demo/${scenario.surface}?scenario=${scenario.id}`} className="button ghost">
                 View demo

@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 async function requireUser() {
   const cookieStore = await cookies();
-  const user = getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
   if (!user) throw new Error("sign in required");
   return user;
 }

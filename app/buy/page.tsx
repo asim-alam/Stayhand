@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { SurfaceTopbar } from "@/components/real-mode/surface-topbar";
 import type {
   BuyIntakeResult,
@@ -33,6 +33,8 @@ function emptyProduct(): BuyProduct {
 }
 
 export default function BuyPage() {
+  const [authReady, setAuthReady] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
   const [step, setStep] = useState<"intake" | "session" | "verdict">("intake");
   const [input, setInput] = useState("");
   const [intaking, setIntaking] = useState(false);
@@ -48,6 +50,32 @@ export default function BuyPage() {
   const [thinking, setThinking] = useState(false);
   const [verdict, setVerdict] = useState<VerdictResponse | null>(null);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { user?: { id: string } | null }) => {
+        if (!data.user) {
+          const callback = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.href = `/login?callbackUrl=${callback}`;
+          return;
+        }
+        setIsAuthed(true);
+      })
+      .catch(() => {
+        const callback = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?callbackUrl=${callback}`;
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
+  }, []);
+
+  // While the auth check is in-flight, render nothing to avoid a flash of the login page.
+  if (!authReady) return null;
+
+  // Auth check done — user not signed in; redirect is already in-flight via useEffect.
+  if (!isAuthed) return null;
 
   function resetAll() {
     setStep("intake");
@@ -203,6 +231,34 @@ export default function BuyPage() {
     });
   }
 
+  async function logMoment(result: BuyVerdictResult) {
+    const user_action = result.verdict === "BUY" ? "bought" : result.verdict === "WAIT_24H" ? "waited" : "decided_not_to_buy";
+    const status = result.verdict === "BUY" ? "completed" : result.verdict === "WAIT_24H" ? "cooled" : "abandoned";
+
+    void fetch("/api/moments/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        surface: "buy",
+        title: `Purchase: ${product.title}`,
+        status,
+        user_action,
+        trigger_reason: "Purchase interrogation",
+        heat_before: 100, // starting point
+        heat_after: result.urgency_score * 10,
+        original_input: input,
+        ai_review: result.reasoning,
+        ai_suggestion: result.cheaper_alternative,
+        final_output: result.verdict,
+        payload: {
+          product,
+          underlying_need: result.underlying_need,
+          transcript_length: messages.length,
+        }
+      })
+    });
+  }
+
   async function computeVerdict(transcript: BuyQuestionMessage[]) {
     setThinking(true);
     setError("");
@@ -227,6 +283,7 @@ export default function BuyPage() {
         model: data.model ?? null,
       });
       setStep("verdict");
+      void logMoment(data.result);
     } catch (verdictError) {
       setError(verdictError instanceof Error ? verdictError.message : "verdict failed");
     } finally {

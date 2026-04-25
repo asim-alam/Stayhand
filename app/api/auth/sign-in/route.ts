@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { displayName?: string; passcode?: string; mode?: ReplyAuthMode };
-    const result = signInReplyUser(
+    const result = await signInReplyUser(
       typeof body.displayName === "string" ? body.displayName : "",
       typeof body.passcode === "string" ? body.passcode : "",
       body.mode === "create" || body.mode === "sign-in" ? body.mode : "auto"
@@ -18,6 +18,8 @@ export async function POST(request: Request) {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 30,
       expires: new Date(result.expiresAt),
     });
 

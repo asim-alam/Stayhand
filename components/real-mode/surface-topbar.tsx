@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { SURFACE_META } from "@/lib/scenarios/catalog";
 import type { RealModeSurface } from "@/lib/real-mode/types";
+import { AuthControl } from "@/components/shared/auth-control";
 
 const ORDER: RealModeSurface[] = ["send", "buy", "reply"];
 
@@ -42,6 +43,7 @@ export function SurfaceTopbar({
       </nav>
 
       <div className="real-topbar__actions">
+        <AuthControl />
         <a href={actionHref} className="button ghost">
           {actionLabel}
         </a>

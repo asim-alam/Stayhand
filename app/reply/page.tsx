@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
 import { CoolingDrawer, type CoolingItem } from "@/components/real-mode/cooling-drawer";
 import { HeatMeter } from "@/components/real-mode/heat-meter";
 import { HoldSendButton } from "@/components/real-mode/hold-send-button";
 import { ReadAloudGate } from "@/components/real-mode/read-aloud-gate";
 import { SoftenSheet } from "@/components/real-mode/soften-sheet";
+import { AuthControl } from "@/components/shared/auth-control";
 import type { ReplyAnalyzeResult, ReplyCategory, ReplyCoachMessage, BotPersona, MessageOutcome, UserActionType } from "@/lib/real-mode/types";
 
 // ---------------------------------------------------------------------------
@@ -167,11 +167,8 @@ function buildCoachPayload(messages: ReplyMessage[], user: ReplyUser | null, dra
 export default function ReplyPage() {
   const [user, setUser] = useState<ReplyUser | null>(null);
   const [session, setSession] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState("");
-  const [passcode, setPasscode] = useState("");
-  const [authMode, setAuthMode] = useState<"create" | "sign-in">("sign-in");
-  const [authError, setAuthError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
 
   const [conversations, setConversations] = useState<ReplyConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -190,10 +187,12 @@ export default function ReplyPage() {
   const [review, setReview] = useState<ReviewState | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [composerError, setComposerError] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeIdRef = useRef<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stats = messages.reduce(
     (acc, message) => {
@@ -219,27 +218,83 @@ export default function ReplyPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length, activeId]);
 
+  // Polling fallback: re-fetch messages every 3 s so the other person's messages appear
+  // even when the WebSocket connection isn't available (e.g. during dev with Turbopack).
+  useEffect(() => {
+    if (!user || !activeId) return;
+
+    // Clear any previous timer whenever activeId changes
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/reply/messages?conversationId=${encodeURIComponent(activeId)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          messages?: ReplyMessage[];
+          memory?: string;
+          conversation?: ReplyConversation;
+        };
+        if (data.messages) {
+          setMessages((prev) => mergeMessages(prev, data.messages!));
+        }
+        if (data.conversation) {
+          setActiveConversation(data.conversation);
+          setConversations((prev) => mergeConversations(prev, data.conversation!));
+        }
+        if (data.memory) {
+          setMemory(data.memory);
+        }
+      } catch {
+        // ignore network errors between polls
+      }
+    }, 1500); // 1.5s — tight enough to feel near-real-time
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [user, activeId]);
+
   useEffect(() => {
     if (!session) return;
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws/reply?session=${encodeURIComponent(session)}`);
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
 
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as SocketEvent;
-      if (payload.type === "message.created") {
-        setConversations((prev) => mergeConversations(prev, payload.conversation));
-        if (payload.conversationId === activeIdRef.current) {
-          setMessages((prev) => mergeMessages(prev, payload.messages));
-          setActiveConversation(payload.conversation);
-          setMemory(payload.conversation.memory);
+    function connect() {
+      if (destroyed) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${protocol}://${window.location.host}/ws/reply?session=${encodeURIComponent(session!)}`);
+
+      ws.onmessage = (event) => {
+        const payload = JSON.parse(event.data) as SocketEvent;
+        if (payload.type === "message.created") {
+          setConversations((prev) => mergeConversations(prev, payload.conversation));
+          if (payload.conversationId === activeIdRef.current) {
+            setMessages((prev) => mergeMessages(prev, payload.messages));
+            setActiveConversation(payload.conversation);
+            setMemory(payload.conversation.memory);
+          }
         }
-      }
-      if (payload.type === "invite.accepted" || payload.type === "conversation.updated") {
-        setConversations((prev) => mergeConversations(prev, payload.conversation));
-      }
-    };
+        if (payload.type === "invite.accepted" || payload.type === "conversation.updated") {
+          setConversations((prev) => mergeConversations(prev, payload.conversation));
+        }
+      };
 
-    return () => socket.close();
+      ws.onclose = () => {
+        if (!destroyed) {
+          // Auto-reconnect after 2 seconds so real-time stays alive
+          reconnectTimer = setTimeout(connect, 2000);
+        }
+      };
+    }
+
+    connect();
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
   }, [session]);
 
   useEffect(() => {
@@ -247,6 +302,7 @@ export default function ReplyPage() {
     if (!draft.trim()) {
       setAnalysis(EMPTY_ANALYSIS);
       setShowSoften(false);
+      setComposerError("");
       return;
     }
 
@@ -267,6 +323,7 @@ export default function ReplyPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            conversationId: activeId,
             draft: draft.trim(),
             ...buildCoachPayload(messages, user, draft),
             context: `conversation: ${activeConversation?.title || "reply workspace"}`,
@@ -276,11 +333,15 @@ export default function ReplyPage() {
             userName: user?.displayName,
           }),
         });
-        const data = (await response.json()) as { result?: ReplyAnalyzeResult };
+        const data = (await response.json()) as { result?: ReplyAnalyzeResult; error?: string };
+        if (!response.ok) {
+          throw new Error(data.error ?? "failed to analyze reply");
+        }
         if (cancelled) return;
         const next = data.result ?? EMPTY_ANALYSIS;
         setAnalysis(next);
         setShowSoften(false);
+        setComposerError("");
       } catch {
         if (!cancelled) {
           setAnalysis(EMPTY_ANALYSIS);
@@ -314,21 +375,34 @@ export default function ReplyPage() {
   }, [cooling]);
 
   async function bootstrap() {
+    // Phase 1: auth check — fast (sessionv2 tokens decode in memory, no DB hit)
     setLoading(true);
     try {
-      const response = await fetch("/api/auth/me");
+      const response = await fetch("/api/auth/me", { cache: "no-store" });
       const data = (await response.json()) as { user: ReplyUser | null; session: string | null };
+      if (!data.user) {
+        // Redirect silently — stay on loading screen until navigation completes
+        const callback = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.replace(`/login?callbackUrl=${callback}`);
+        return; // setLoading stays true, screen stays blank until redirect fires
+      }
       setUser(data.user);
       setSession(data.session);
-      if (data.user) {
-        await loadConversations(getInitialConversationId());
+      setLoading(false); // Show UI shell immediately — don't wait for conversations
+
+      // Phase 2: load conversations in background (sidebar shows a loading state)
+      setConversationsLoading(true);
+      try {
+        await loadConversations(getInitialConversationId(), data.user);
+      } finally {
+        setConversationsLoading(false);
       }
-    } finally {
+    } catch {
       setLoading(false);
     }
   }
 
-  async function loadConversations(preferredId?: string | null) {
+  async function loadConversations(preferredId?: string | null, userOverride?: ReplyUser) {
     const response = await fetch("/api/reply/conversations");
     const data = (await response.json()) as { conversations?: ReplyConversation[] };
     const next = data.conversations ?? [];
@@ -350,38 +424,6 @@ export default function ReplyPage() {
     setActiveConversation(data.conversation ?? null);
     setActiveId(conversationId);
     window.history.replaceState(null, "", `/reply?conversation=${conversationId}`);
-  }
-
-  async function signIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAuthError("");
-    const response = await fetch("/api/auth/sign-in", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ displayName, passcode, mode: authMode }),
-    });
-    const data = (await response.json()) as { user?: ReplyUser; session?: string; error?: string };
-    if (!response.ok || !data.user || !data.session) {
-      setAuthError(data.error ?? "sign in failed");
-      return;
-    }
-    setUser(data.user);
-    setSession(data.session);
-    setDisplayName("");
-    setPasscode("");
-    await loadConversations(getInitialConversationId());
-  }
-
-  async function signOut() {
-    await fetch("/api/auth/sign-out", { method: "POST" });
-    setUser(null);
-    setSession(null);
-    setConversations([]);
-    setMessages([]);
-    setActiveConversation(null);
-    setActiveId(null);
-    setInviteUrl("");
-    window.history.replaceState(null, "", "/reply");
   }
 
   async function createInviteLink() {
@@ -407,6 +449,7 @@ export default function ReplyPage() {
     setAnalysis(EMPTY_ANALYSIS);
     setShowSoften(false);
     setReview(null);
+    setComposerError("");
     inputRef.current?.focus();
   }
 
@@ -418,6 +461,21 @@ export default function ReplyPage() {
 
   async function deliverMessage(body: string, meta: SendMeta, outcomeData?: any) {
     if (!activeId || !body.trim()) return;
+    // Optimistic UI: show the sender's message instantly before server confirms
+    const optimisticId = `optimistic_${Date.now()}`;
+    if (user) {
+      const optimisticMsg: ReplyMessage = {
+        id: optimisticId,
+        conversationId: activeId,
+        senderId: user.id,
+        senderType: "user",
+        senderName: user.displayName,
+        body: body.trim(),
+        friction: meta,
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => mergeMessages(prev, [optimisticMsg]));
+    }
     setSending(true);
     try {
       const response = await fetch("/api/reply/messages", {
@@ -433,10 +491,21 @@ export default function ReplyPage() {
       if (!response.ok || !data.created || !data.conversation) {
         throw new Error(data.error ?? "failed to send message");
       }
-      setMessages((prev) => mergeMessages(prev, data.created!));
+      // Replace optimistic message with real server-confirmed messages
+      setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), data.created!));
       setConversations((prev) => mergeConversations(prev, data.conversation!));
       setActiveConversation(data.conversation);
       setMemory(data.conversation.memory);
+      setComposerError("");
+    } catch (error) {
+      // On failure, remove the optimistic message
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      const message = error instanceof Error ? error.message : "failed to send message";
+      setComposerError(message);
+      if (message === "sign in required") {
+        const callback = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?callbackUrl=${callback}`;
+      }
     } finally {
       setSending(false);
     }
@@ -482,6 +551,7 @@ export default function ReplyPage() {
     if (!text) return;
     setReviewing(true);
     setReview(null);
+    setComposerError("");
     try {
       const conversationKind = activeConversation?.kind ?? "bot";
       const botPersona = conversationKind === "bot" && activeConversation?.botId
@@ -495,6 +565,7 @@ export default function ReplyPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          conversationId: activeId,
           draft: text,
           ...buildCoachPayload(messages, user, text),
           context: `conversation: ${displayConversationTitle(activeConversation, user)}`,
@@ -504,7 +575,10 @@ export default function ReplyPage() {
           userName: user?.displayName,
         }),
       });
-      const data = (await response.json()) as { result?: ReplyAnalyzeResult };
+      const data = (await response.json()) as { result?: ReplyAnalyzeResult; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "failed to review draft");
+      }
       const next = data.result ?? analysis;
       const suggestion = next.try_message.trim() || next.softened.trim() || text;
       setAnalysis(next);
@@ -514,6 +588,9 @@ export default function ReplyPage() {
         analysis: next,
         meta: { ...meta, heat: next.heat, category: meta.category ?? next.category },
       });
+      setComposerError("");
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : "failed to review draft");
     } finally {
       setReviewing(false);
     }
@@ -525,6 +602,10 @@ export default function ReplyPage() {
     if (!text) return;
     if (review) {
       sendReviewedDraft();
+      return;
+    }
+    if (activeConversation?.kind === "human") {
+      void reviewDraft({ heat: analysis.heat, category: analysis.category });
       return;
     }
     if (analysis.issue_type === "none" && analysis.heat < 60) {
@@ -615,51 +696,9 @@ export default function ReplyPage() {
     void deliverMessage(item.text, { cooled: true, sentAnyway: true });
   }
 
-  if (loading) {
+  // Show nothing while loading or during redirect — avoids the brief black/login flash.
+  if (loading || !user) {
     return <main className="reply-app-shell" />;
-  }
-
-  if (!user) {
-    return (
-      <main className="reply-app-shell reply-app-shell--center">
-        <form className="reply-signin" onSubmit={signIn}>
-          <a href="/" className="site-header__brand-link" style={{ textDecoration: 'none', marginBottom: 12 }}>
-            <img src="/logo.png" alt="" style={{ width: 42, height: 42, marginRight: 12, borderRadius: 6, verticalAlign: 'middle', boxShadow: '0 0 42px rgba(240, 161, 58, 0.1)' }} />
-            <span style={{ fontSize: '1.4rem' }}><span style={{ color: 'var(--amber)' }}>Stay</span>hand</span>
-          </a>
-          <span className="eyebrow">local account</span>
-          <h1>{authMode === "create" ? "Create your reply account." : "Sign in to reply."}</h1>
-          <p>
-            Pick a display name and passcode. Stayhand will resume your bot and invite conversations from this browser.
-          </p>
-          <div className="reply-auth-toggle">
-            <button type="button" className={authMode === "sign-in" ? "is-active" : ""} onClick={() => setAuthMode("sign-in")}>
-              Sign in
-            </button>
-            <button type="button" className={authMode === "create" ? "is-active" : ""} onClick={() => setAuthMode("create")}>
-              Create account
-            </button>
-          </div>
-          <label>
-            Display name
-            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ari" />
-          </label>
-          <label>
-            Passcode
-            <input
-              type="password"
-              value={passcode}
-              onChange={(event) => setPasscode(event.target.value)}
-              placeholder="something memorable"
-            />
-          </label>
-          {authError && <p className="reply-error">{authError}</p>}
-          <button type="submit" className="button primary">
-            {authMode === "create" ? "Create account" : "Sign in"}
-          </button>
-        </form>
-      </main>
-    );
   }
 
   return (
@@ -683,9 +722,7 @@ export default function ReplyPage() {
           <span>-</span>
           <strong>{stats.apologies}</strong> apologies
         </div>
-        <button type="button" className="button ghost" onClick={signOut}>
-          Sign out
-        </button>
+        <AuthControl />
       </header>
 
       <section className="reply-app-layout">
@@ -707,6 +744,11 @@ export default function ReplyPage() {
           <div className="reply-rail-section">
             <span className="eyebrow">conversations</span>
             <div className="reply-conversation-list">
+              {conversationsLoading && conversations.length === 0 && (
+                <p style={{ opacity: 0.45, fontSize: "0.8rem", padding: "8px 4px", animation: "pulse 1.4s ease-in-out infinite" }}>
+                  loading conversations…
+                </p>
+              )}
               {conversations.map((conversation) => (
                 <button
                   type="button"
@@ -872,9 +914,10 @@ export default function ReplyPage() {
                 onSend={handleSend}
                 onWantsCool={handleWantsCool}
                 onApology={handleApology}
-                neutralLabel={review ? "send now" : reviewing ? "reviewing..." : "review reply"}
+                neutralLabel={review ? "send now" : reviewing ? "reviewing..." : activeConversation?.kind === "human" ? "review reply" : "send reply"}
               />
             </div>
+            {composerError && <p className="reply-error" style={{ marginTop: 8 }}>{composerError}</p>}
             <HeatMeter heat={analysis.heat} loading={analyzing} />
           </div>
         </section>

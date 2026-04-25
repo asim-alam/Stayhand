@@ -58,9 +58,48 @@ function tidyDraft(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function wordCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function softenLine(line: string): string {
+  return line
+    .replace(/\bI cannot believe\b/gi, "I am concerned that")
+    .replace(/\bthis is exactly why\b/gi, "this is part of why")
+    .replace(/\bfix it now\b/gi, "can we fix this next")
+    .replace(/\bon you, not us\b/gi, "something we need to resolve together")
+    .replace(/\bthis is exactly the pattern that keeps putting the team in cleanup mode\b/gi, "this is the process gap I want us to fix")
+    .replace(/\bdo not make me chase this again\b/gi, "please confirm ownership so I do not have to chase the next step")
+    .replace(/\byou always\b/gi, "this has happened more than once")
+    .replace(/\byou never\b/gi, "I am not seeing")
+    .replace(/\bASAP\b/g, "today if possible");
+}
+
+function buildLongFormImprovedDraft(decisionType: DecisionType, draft: string): string {
+  if (decisionType === "buy") {
+    return "I am going to pause this purchase until I can name the exact need, compare it with what I already have, and decide again without the urgency pressure.";
+  }
+
+  const lines = draft
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (!lines.length) return draft.trim();
+
+  const softenedLines = lines.map((line) => softenLine(line));
+  return softenedLines.join("\n\n");
+}
+
 function buildImprovedDraft(decisionType: DecisionType, draft: string): string {
   const text = tidyDraft(draft);
   const lower = text.toLowerCase();
+  const words = wordCount(text);
+  const lineCount = draft.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+
+  if (words >= 120 || lineCount >= 8) {
+    return buildLongFormImprovedDraft(decisionType, draft);
+  }
 
   if (decisionType === "buy") {
     return "I am going to pause this purchase until I can name the exact need, compare it with what I already have, and decide again without the urgency pressure.";
@@ -78,9 +117,9 @@ function buildImprovedDraft(decisionType: DecisionType, draft: string): string {
     return `I want to make this decision deliberately, not reactively: ${text}`;
   }
 
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const draftWordCount = text.split(/\s+/).filter(Boolean).length;
   const looksLikeWorkEscalation =
-    wordCount >= 60 &&
+    draftWordCount >= 60 &&
     ["client", "handoff", "rollout", "launch", "timeline", "team", "escalation"].some((term) => lower.includes(term));
 
   if (looksLikeWorkEscalation) {
@@ -99,16 +138,7 @@ function buildImprovedDraft(decisionType: DecisionType, draft: string): string {
     return "I am sorry for how I handled this. You do not need to respond right now. I want to come back to it with more care when we both have space.";
   }
 
-  const softened = text
-    .replace(/\bI cannot believe\b/gi, "I am concerned that")
-    .replace(/\bthis is exactly why\b/gi, "this is part of why")
-    .replace(/\bfix it now\b/gi, "can we fix this next")
-    .replace(/\bon you, not us\b/gi, "something we need to resolve together")
-    .replace(/\bthis is exactly the pattern that keeps putting the team in cleanup mode\b/gi, "this is the process gap I want us to fix")
-    .replace(/\bdo not make me chase this again\b/gi, "please confirm ownership so I do not have to chase the next step")
-    .replace(/\byou always\b/gi, "this has happened more than once")
-    .replace(/\byou never\b/gi, "I am not seeing")
-    .replace(/\bASAP\b/g, "today if possible");
+  const softened = softenLine(text);
 
   if (softened !== text) {
     return softened;
@@ -151,6 +181,7 @@ function fallbackFor(surface: "send" | "buy", decisionType: DecisionType, draft:
     ...fallback,
     improved_draft: buildImprovedDraft(decisionType, draft),
     change_summary: buildChangeSummary(decisionType),
+    recommended_cooldown_seconds: clamp(fallback.recommended_cooldown_seconds, 30, 60),
   };
 }
 
@@ -197,10 +228,13 @@ export async function analyzeSendMoment(input: SendAnalyzeRequest & { type?: str
     contextLine.trim(),
     amountLine.trim(),
     "Draft:",
-    `"""${draft.slice(0, 3000)}"""`,
+    `"""${draft}"""`,
     "Return ONLY JSON with keys honest_summary, improved_draft, change_summary, questions, forecast, recommended_cooldown_seconds.",
     "honest_summary: one sentence, under 24 words, direct and non-preachy.",
     "improved_draft: a ready-to-use safer version that preserves the user's meaning while lowering heat, blame, urgency, or ambiguity.",
+    "If the draft is long or multi-paragraph, keep similar detail and structure.",
+    "Do not collapse long drafts into a short generic 1-2 line rewrite.",
+    "For drafts above 120 words, improved_draft should be at least 55% of the original word count.",
     "change_summary: array of 2-3 short notes explaining what changed.",
     "questions: exactly 3 short practical questions.",
     "forecast: object with best_case, likely_case, regret_case, each one sentence.",
@@ -222,12 +256,18 @@ export async function analyzeSendMoment(input: SendAnalyzeRequest & { type?: str
       ? parsed.change_summary.filter((item): item is string => typeof item === "string").slice(0, 3)
       : fallback.change_summary;
 
+    const parsedImprovedDraft = typeof parsed.improved_draft === "string" && parsed.improved_draft.trim()
+      ? parsed.improved_draft.trim()
+      : fallback.improved_draft;
+    const sourceWords = wordCount(draft);
+    const improvedWords = wordCount(parsedImprovedDraft);
+    const tooCompressedLongDraft =
+      sourceWords >= 120 && improvedWords < Math.max(60, Math.floor(sourceWords * 0.55));
+
     return {
       result: {
         honest_summary: typeof parsed.honest_summary === "string" ? parsed.honest_summary : fallback.honest_summary,
-        improved_draft: typeof parsed.improved_draft === "string" && parsed.improved_draft.trim()
-          ? parsed.improved_draft.trim()
-          : fallback.improved_draft,
+        improved_draft: tooCompressedLongDraft ? fallback.improved_draft : parsedImprovedDraft,
         change_summary: changeSummary.length >= 2 ? changeSummary : fallback.change_summary,
         questions: questions.length === 3 ? questions : fallback.questions,
         forecast: {
@@ -238,7 +278,7 @@ export async function analyzeSendMoment(input: SendAnalyzeRequest & { type?: str
         recommended_cooldown_seconds: clamp(
           typeof parsed.recommended_cooldown_seconds === "number" ? parsed.recommended_cooldown_seconds : fallback.recommended_cooldown_seconds,
           30,
-          300
+          60
         ),
       },
       live: true,

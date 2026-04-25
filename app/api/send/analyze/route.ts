@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { analyzeSendMoment } from "@/lib/real-mode/send-service";
+import { cookies } from "next/headers";
+import { getReplyUserBySession, REPLY_SESSION_COOKIE } from "@/lib/reply/messaging-service";
 
 export const runtime = "nodejs";
 
+async function requireUser() {
+  const cookieStore = await cookies();
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  if (!user) throw new Error("sign in required");
+  return user;
+}
+
 export async function POST(request: Request) {
   try {
+    await requireUser();
     const body = await request.json() as {
       draft?: string;
       context?: string;
@@ -31,9 +41,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response);
   } catch (error) {
+    const message = error instanceof Error ? error.message : "failed to analyze send draft";
+    const status = message === "sign in required" ? 401 : 500;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "failed to analyze send draft" },
-      { status: 500 }
+      { error: message },
+      { status }
     );
   }
 }

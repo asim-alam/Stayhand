@@ -1,11 +1,21 @@
 import { generateBuyQuestion } from "@/lib/real-mode/buy-service";
 import { createTextSseStream } from "@/lib/real-mode/sse";
 import type { BuyProduct, BuyQuestionMessage } from "@/lib/real-mode/types";
+import { cookies } from "next/headers";
+import { getReplyUserBySession, REPLY_SESSION_COOKIE } from "@/lib/reply/messaging-service";
 
 export const runtime = "nodejs";
 
+async function requireUser() {
+  const cookieStore = await cookies();
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  if (!user) throw new Error("sign in required");
+  return user;
+}
+
 export async function POST(request: Request) {
   try {
+    await requireUser();
     const body = await request.json() as {
       product?: BuyProduct;
       history?: BuyQuestionMessage[];
@@ -42,10 +52,12 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "failed to generate question";
+    const status = message === "sign in required" ? 401 : 500;
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "failed to generate question" }),
+      JSON.stringify({ error: message }),
       {
-        status: 500,
+        status,
         headers: { "Content-Type": "application/json" },
       }
     );

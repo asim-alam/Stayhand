@@ -13,3 +13,5 @@ Hackathon.md
 AGENT.md
 SKILL_BUILD_SECOND_THOUGHT.md
 .tmp-edge-profile/
+.vercel
+.env*.local

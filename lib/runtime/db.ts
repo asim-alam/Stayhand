@@ -1,18 +1,102 @@
-import fs from "node:fs"; // Triggering restart for DB schema update
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { LedgerEntry, MCPServerConfig } from "@/lib/types/runtime";
 import type { MessageOutcome } from "@/lib/real-mode/types";
 
-const dataDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "stayhand.sqlite");
+function resolveDbPath(): string {
+  if (process.env.STAYHAND_DB_PATH) return process.env.STAYHAND_DB_PATH;
+  if (process.env.VERCEL) return path.join(os.tmpdir(), "stayhand.sqlite");
+  return path.join(process.cwd(), "data", "stayhand.sqlite");
+}
+
+const dbPath = resolveDbPath();
+const dataDir = path.dirname(dbPath);
 
 let dbInstance: DatabaseSync | null = null;
 
+// ─── Schema Migrations ──────────────────────────────────────────────────────
+
+function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === column);
+}
+
+function tableExists(db: DatabaseSync, table: string): boolean {
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table) as { name: string } | undefined;
+  return !!row;
+}
+
+function applyMigrations(db: DatabaseSync): void {
+  // Ensure migration tracking table exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const applied = new Set(
+    (db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((r) => r.version)
+  );
+
+  const migrate = (version: string, fn: () => void) => {
+    if (applied.has(version)) return;
+    fn();
+    db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(version, new Date().toISOString());
+    if (process.env.NODE_ENV === "development") console.log(`[DB] Applied migration: ${version}`);
+  };
+
+  // M001: Add user_id to message_outcomes if missing
+  migrate("M001_message_outcomes_user_id", () => {
+    if (tableExists(db, "message_outcomes") && !hasColumn(db, "message_outcomes", "user_id")) {
+      db.exec(`ALTER TABLE message_outcomes ADD COLUMN user_id TEXT NOT NULL DEFAULT 'unknown';`);
+    }
+  });
+
+  // M002: Add why_appeared to message_outcomes if missing
+  migrate("M002_message_outcomes_why_appeared", () => {
+    if (tableExists(db, "message_outcomes") && !hasColumn(db, "message_outcomes", "why_appeared")) {
+      db.exec(`ALTER TABLE message_outcomes ADD COLUMN why_appeared TEXT NOT NULL DEFAULT 'Routine check';`);
+    }
+  });
+
+  // M003: Create unified stayhand_moments table
+  migrate("M003_stayhand_moments", () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS stayhand_moments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        anonymous_session_id TEXT,
+        surface TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        trigger_reason TEXT,
+        heat_before INTEGER,
+        heat_after INTEGER,
+        original_input TEXT,
+        ai_review TEXT,
+        ai_suggestion TEXT,
+        final_output TEXT,
+        user_action TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_moments_user_ts
+        ON stayhand_moments(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_moments_anon_ts
+        ON stayhand_moments(anonymous_session_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_moments_surface
+        ON stayhand_moments(surface, created_at DESC);
+    `);
+  });
+}
+
+// ─── DB Initialization ───────────────────────────────────────────────────────
+
 function ensureDb(): DatabaseSync {
-  if (dbInstance) {
-    return dbInstance;
-  }
+  if (dbInstance) return dbInstance;
 
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -122,6 +206,9 @@ function ensureDb(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_message_outcomes_ts ON message_outcomes(timestamp);
   `);
 
+  // Apply any pending migrations (safe column adds, new tables)
+  applyMigrations(db);
+
   dbInstance = db;
   return db;
 }
@@ -129,6 +216,8 @@ function ensureDb(): DatabaseSync {
 export function getDb(): DatabaseSync {
   return ensureDb();
 }
+
+// ─── MCP / Plugins / Ledger ──────────────────────────────────────────────────
 
 export function getSavedMcpServers(): MCPServerConfig[] {
   const db = ensureDb();
@@ -193,6 +282,8 @@ export function persistLedgerEntry(entry: LedgerEntry): void {
   ).run(entry.id, entry.ts, entry.sourceId, entry.mode, entry.action, entry.summary, entry.saved ?? null, entry.heat ?? null, entry.quotient ?? null);
 }
 
+// ─── Message Outcomes (legacy, Reply-only) ───────────────────────────────────
+
 export function getMessageOutcomes(userId: string, limit = 50): MessageOutcome[] {
   const db = ensureDb();
   const rows = db.prepare("SELECT * FROM message_outcomes WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(userId, limit) as any[];
@@ -207,7 +298,7 @@ export function getMessageOutcomes(userId: string, limit = 50): MessageOutcome[]
     latest_incoming_message: row.latest_incoming_message,
     user_draft: row.user_draft,
     ai_review: row.ai_review,
-    why_appeared: row.why_appeared,
+    why_appeared: row.why_appeared ?? "Routine check",
     warning_badge: row.warning_badge,
     reply_type: row.reply_type,
     issue_type: row.issue_type,
@@ -236,6 +327,85 @@ export function persistMessageOutcome(outcome: MessageOutcome): void {
     outcome.final_sent_message, outcome.user_action, outcome.outcome_summary
   );
 }
+
+// ─── Unified Stayhand Moments ────────────────────────────────────────────────
+
+export type StayhandMoment = {
+  id: string;
+  user_id: string | null;
+  anonymous_session_id: string | null;
+  surface: "reply" | "send" | "buy";
+  created_at: string;
+  title: string;
+  status: "completed" | "dismissed" | "cooled" | "abandoned";
+  trigger_reason: string | null;
+  heat_before: number | null;
+  heat_after: number | null;
+  original_input: string | null;
+  ai_review: string | null;
+  ai_suggestion: string | null;
+  final_output: string | null;
+  user_action: string;
+  payload_json: string;
+};
+
+export function getMoments(userId: string | null, anonSessionId: string | null, surface?: string, limit = 50): StayhandMoment[] {
+  const db = ensureDb();
+  if (!userId && !anonSessionId) return [];
+
+  let query: string;
+  let params: (string | number)[];
+
+  if (userId) {
+    query = surface
+      ? "SELECT * FROM stayhand_moments WHERE user_id = ? AND surface = ? ORDER BY created_at DESC LIMIT ?"
+      : "SELECT * FROM stayhand_moments WHERE user_id = ? ORDER BY created_at DESC LIMIT ?";
+    params = surface ? [userId, surface, limit] : [userId, limit];
+  } else {
+    query = surface
+      ? "SELECT * FROM stayhand_moments WHERE anonymous_session_id = ? AND surface = ? ORDER BY created_at DESC LIMIT ?"
+      : "SELECT * FROM stayhand_moments WHERE anonymous_session_id = ? ORDER BY created_at DESC LIMIT ?";
+    params = surface ? [anonSessionId!, surface, limit] : [anonSessionId!, limit];
+  }
+
+  return (db.prepare(query).all(...params) as any[]).map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    anonymous_session_id: row.anonymous_session_id,
+    surface: row.surface,
+    created_at: row.created_at,
+    title: row.title,
+    status: row.status,
+    trigger_reason: row.trigger_reason,
+    heat_before: row.heat_before,
+    heat_after: row.heat_after,
+    original_input: row.original_input,
+    ai_review: row.ai_review,
+    ai_suggestion: row.ai_suggestion,
+    final_output: row.final_output,
+    user_action: row.user_action,
+    payload_json: row.payload_json,
+  }));
+}
+
+export function persistMoment(moment: StayhandMoment): void {
+  const db = ensureDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO stayhand_moments (
+      id, user_id, anonymous_session_id, surface, created_at, title, status,
+      trigger_reason, heat_before, heat_after, original_input,
+      ai_review, ai_suggestion, final_output, user_action, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    moment.id, moment.user_id, moment.anonymous_session_id, moment.surface,
+    moment.created_at, moment.title, moment.status,
+    moment.trigger_reason, moment.heat_before, moment.heat_after,
+    moment.original_input, moment.ai_review, moment.ai_suggestion,
+    moment.final_output, moment.user_action, moment.payload_json
+  );
+}
+
+// ─── Session Validation ───────────────────────────────────────────────────────
 
 export function validateSession(token: string): boolean {
   const db = ensureDb();

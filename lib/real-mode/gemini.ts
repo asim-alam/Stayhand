@@ -17,12 +17,24 @@ function normalizeGeminiModel(rawModel: string | undefined): string {
   return aliases[model] || model;
 }
 
+function normalizeGroqModel(rawModel: string | undefined): string {
+  return (rawModel || "llama-3.3-70b-versatile").trim();
+}
+
 export function getConfiguredGeminiModel(): string {
   return normalizeGeminiModel(process.env.GEMINI_MODEL);
 }
 
+export function getConfiguredGroqModel(): string {
+  return normalizeGroqModel(process.env.GROQ_MODEL);
+}
+
 export function getGeminiApiKey(): string | undefined {
   return process.env.GEMINI_API_KEY;
+}
+
+export function getGroqApiKey(): string | undefined {
+  return process.env.GROQ_API_KEY;
 }
 
 export function extractGeminiText(payload: unknown): string {
@@ -60,11 +72,52 @@ export async function generateJson<T>({
   temperature?: number;
   timeoutMs?: number;
 }): Promise<{ parsed: T; model: string }> {
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY missing");
+  const errors: string[] = [];
+  const groqApiKey = getGroqApiKey();
+
+  if (groqApiKey) {
+    const model = getConfiguredGroqModel();
+    try {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${groqApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: "Return only valid JSON. Do not include markdown fences." },
+            { role: "user", content: prompt },
+          ],
+          temperature,
+          response_format: { type: "json_object" },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Groq request failed with ${response.status}.`);
+      }
+
+      const payload = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = payload.choices?.[0]?.message?.content?.trim() || "";
+      const parsed = tryParseJson(content);
+      if (!parsed) {
+        throw new Error("Groq returned unreadable JSON.");
+      }
+      return { parsed: parsed as T, model: `groq:${model}` };
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "Groq request failed.");
+    }
   }
 
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(errors.length ? errors.join(" ") : "GROQ_API_KEY and GEMINI_API_KEY missing");
+  }
   const model = getConfiguredGeminiModel();
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
@@ -83,14 +136,13 @@ export async function generateJson<T>({
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini request failed with ${response.status}.`);
+    throw new Error(`${errors.join(" ")} Gemini request failed with ${response.status}.`.trim());
   }
 
   const parsed = tryParseJson(extractGeminiText(await response.json()));
   if (!parsed) {
-    throw new Error("Gemini returned unreadable JSON.");
+    throw new Error(`${errors.join(" ")} Gemini returned unreadable JSON.`.trim());
   }
 
-  return { parsed: parsed as T, model };
+  return { parsed: parsed as T, model: `gemini:${model}` };
 }
-

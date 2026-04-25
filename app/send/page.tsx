@@ -47,6 +47,8 @@ function getRiskLabel(score: number): string {
 }
 
 export default function SendPage() {
+  const [authReady, setAuthReady] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
   const [type, setType] = useState<DecisionType>("send");
   const [tone, setTone] = useState<Tone>("therapist");
   const [draft, setDraft] = useState("");
@@ -61,6 +63,26 @@ export default function SendPage() {
   const [outcome, setOutcome] = useState<string | null>(null);
   const [saferApplied, setSaferApplied] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
+
+  useEffect(() => {
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { user?: { id: string } | null }) => {
+        if (!data.user) {
+          const callback = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.href = `/login?callbackUrl=${callback}`;
+          return;
+        }
+        setIsAuthed(true);
+      })
+      .catch(() => {
+        const callback = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?callbackUrl=${callback}`;
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
+  }, []);
 
   // Cooldown ticker
   useEffect(() => {
@@ -77,6 +99,12 @@ export default function SendPage() {
     if (remaining < 3600) return `${Math.ceil(remaining / 60)}m`;
     return `${Math.ceil(remaining / 3600)}h`;
   }, [remaining]);
+
+  // While the auth check is in-flight, render nothing to avoid a flash of the login page.
+  if (!authReady) return null;
+
+  // Auth check done — user not signed in; redirect is already in-flight via useEffect.
+  if (!isAuthed) return null;
 
   async function handleAnalyze() {
     if (!draft.trim()) return;
@@ -107,7 +135,7 @@ export default function SendPage() {
         throw new Error(data.error || "failed to analyze");
       }
 
-      const cd = Math.min(300, Math.max(30, data.result.recommended_cooldown_seconds));
+      const cd = Math.min(60, Math.max(30, data.result.recommended_cooldown_seconds));
       setResponse({
         result: data.result,
         live: Boolean(data.live),
@@ -162,11 +190,43 @@ export default function SendPage() {
     }
   }
 
+  async function logMoment(action: "proceed" | "edit" | "let_go", status: "completed" | "abandoned") {
+    if (!response) return;
+    
+    // Convert choice to unified user_action
+    const user_action = action === "proceed" ? (saferApplied ? "used_try" : "sent_original") : action === "edit" ? "edited" : "let_go";
+
+    void fetch("/api/moments/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        surface: "send",
+        title: `${type.charAt(0).toUpperCase() + type.slice(1)} decision`,
+        status,
+        user_action,
+        trigger_reason: "High risk cooldown",
+        heat_before: getRiskScore(totalCooldown),
+        heat_after: action === "proceed" && saferApplied ? 30 : getRiskScore(totalCooldown), // rough estimate for now
+        original_input: response.originalDraft,
+        ai_review: response.result.honest_summary,
+        ai_suggestion: response.result.improved_draft,
+        final_output: action === "proceed" ? draft : null,
+        payload: {
+          decision_type: type,
+          forecast: response.result.forecast,
+          reason: reason.trim() || null,
+        }
+      })
+    });
+  }
+
   function chooseOutcome(choice: "proceed" | "edit" | "let_go") {
     if (remaining > 0) {
       window.alert("The pause isn't over. That's the point.");
       return;
     }
+
+    void logMoment(choice, choice === "let_go" ? "abandoned" : "completed");
 
     setOutcome(
       choice === "proceed"

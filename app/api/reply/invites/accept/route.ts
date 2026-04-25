@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 
 async function requireUser() {
   const cookieStore = await cookies();
-  const user = getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
   if (!user) throw new Error("sign in required");
   return user;
 }
@@ -25,9 +25,9 @@ export async function POST(request: Request) {
     if (typeof body.token !== "string" || !body.token.trim()) {
       return NextResponse.json({ error: "token is required" }, { status: 400 });
     }
-    const conversation = acceptInvite(user, body.token);
-    const participantIds = getConversationParticipantIds(conversation.id);
-    const sessionTokens = getActiveSessionTokensForUsers(participantIds);
+    const conversation = await acceptInvite(user, body.token);
+    const participantIds = await getConversationParticipantIds(conversation.id);
+    const sessionTokens = await getActiveSessionTokensForUsers(participantIds);
     broadcastReplyEvent(sessionTokens, {
       type: "invite.accepted",
       conversation,

@@ -5,6 +5,7 @@ import {
   getActiveSessionTokensForUsers,
   getConversationParticipantIds,
   getReplyUserBySession,
+  invalidateConversationCache,
   listMessages,
   REPLY_SESSION_COOKIE,
   sendReplyMessage,
@@ -16,10 +17,11 @@ import type { MessageOutcome, ReplyAnalyzeResult, UserActionType } from "@/lib/r
 import crypto from "node:crypto";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 async function requireUser() {
   const cookieStore = await cookies();
-  const user = getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
   if (!user) throw new Error("sign in required");
   return user;
 }
@@ -32,7 +34,7 @@ export async function GET(request: Request) {
     if (!conversationId) {
       return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
     }
-    return NextResponse.json(listMessages(user.id, conversationId));
+    return NextResponse.json(await listMessages(user.id, conversationId));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "failed to load messages" },
@@ -59,6 +61,17 @@ export async function POST(request: Request) {
     if (typeof body.conversationId !== "string" || typeof body.body !== "string" || !body.body.trim()) {
       return NextResponse.json({ error: "conversationId and body are required" }, { status: 400 });
     }
+    if (
+      body.outcomeData &&
+      (
+        typeof body.outcomeData.originalDraft !== "string" ||
+        !body.outcomeData.reviewData ||
+        typeof body.outcomeData.reviewData.ai_review !== "string" ||
+        typeof body.outcomeData.reviewData.try_message !== "string"
+      )
+    ) {
+      return NextResponse.json({ error: "invalid AI review payload" }, { status: 400 });
+    }
     const result = await sendReplyMessage(user, body.conversationId, body.body, body.friction ?? {});
     
     if (body.outcomeData) {
@@ -78,6 +91,7 @@ export async function POST(request: Request) {
       if (body.outcomeData.userAction === "used_try") outcomeSummary = "User accepted the Try suggestion.";
       else if (body.outcomeData.userAction === "edited_try") outcomeSummary = "User edited the suggestion before sending.";
       else if (body.outcomeData.userAction === "sent_original") outcomeSummary = "User sent their original draft despite friction.";
+      else if (body.outcomeData.userAction === "cooled") outcomeSummary = "User cooled the message before sending.";
       else outcomeSummary = "Message sent with coaching.";
 
       const outcome: MessageOutcome = {
@@ -106,8 +120,10 @@ export async function POST(request: Request) {
       persistMessageOutcome(outcome);
     }
     
-    const participantIds = getConversationParticipantIds(body.conversationId);
-    const sessionTokens = getActiveSessionTokensForUsers(participantIds);
+    const participantIds = await getConversationParticipantIds(body.conversationId);
+    const sessionTokens = await getActiveSessionTokensForUsers(participantIds);
+    // Bust the conversation list cache so the next poll returns fresh data
+    invalidateConversationCache(participantIds);
     broadcastReplyEvent(sessionTokens, {
       type: "message.created",
       conversationId: body.conversationId,

@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 async function requireUser() {
   const cookieStore = await cookies();
-  const user = getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
+  const user = await getReplyUserBySession(cookieStore.get(REPLY_SESSION_COOKIE)?.value);
   if (!user) throw new Error("sign in required");
   return user;
 }
@@ -19,7 +19,7 @@ async function requireUser() {
 export async function GET() {
   try {
     const user = await requireUser();
-    return NextResponse.json({ conversations: listConversations(user.id) });
+    return NextResponse.json({ conversations: await listConversations(user.id) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "failed" }, { status: 401 });
   }
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     if (typeof body.botId !== "string") {
       return NextResponse.json({ error: "botId is required" }, { status: 400 });
     }
-    const conversation = openBotConversation(user.id, body.botId);
+    const conversation = await openBotConversation(user.id, body.botId);
     return NextResponse.json({ conversation });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "failed" }, { status: 400 });

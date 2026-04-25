@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AuthControl } from "@/components/shared/auth-control";
 
 export function SiteHeader({
   active = "home",
@@ -26,6 +27,7 @@ export function SiteHeader({
         <Link href="/results" className={`site-header__link ${active === "results" ? "active" : ""}`}>
           Outcomes
         </Link>
+        <AuthControl />
       </nav>
     </header>
   );
