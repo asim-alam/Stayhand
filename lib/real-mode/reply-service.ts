@@ -92,6 +92,7 @@ type RawCoachResponse = {
   recommended_cooldown_seconds?: unknown;
   other_party_state?: unknown;
   bot_context_hint?: unknown;
+  other_party_emotion?: unknown;
 };
 
 function lc(value: string): string {
@@ -293,7 +294,14 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
     return `I hear you — ${firstQ.toLowerCase()}. Let me give you a clearer answer.`;
   }
 
-  return draft;
+  // Default: return a softened/reflective version, never echo the draft verbatim
+  if (draft.length > 40) {
+    // Long draft — trim to the core point
+    const sentences = draft.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
+    return sentences.length > 1 ? `${sentences[0]}.` : draft;
+  }
+  // Short draft — offer to elaborate
+  return `${draft} — can I clarify what I mean by that?`;
 }
 
 export function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeResult {
@@ -398,81 +406,54 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
     : null;
 
   return [
-    "You are an AI message coach inside Stayhand's reply composer.",
-    "Every draft is analyzed, but not every draft should interrupt the user.",
-    "Your first job is to decide whether Stayhand should intervene before the message is sent.",
-    "Only intervene when the draft would genuinely benefit from review.",
-    "",
-    "A message should be allowed to send directly when it is:",
-    "- relevant to the latest incoming message",
-    "- clear enough",
-    "- calm or neutral in tone",
-    "- not likely to escalate conflict",
-    "- not missing an important question",
-    "- not introducing unrelated context",
-    "- not likely to cause regret",
-    "",
-    "A message should trigger review when it is:",
-    "- unclear",
-    "- too vague",
-    "- emotionally risky",
-    "- defensive",
-    "- aggressive",
-    "- dismissive",
-    "- off-topic",
-    "- missing the other person’s point",
-    "- likely to escalate tension",
-    "- likely to be regretted",
-    "",
-    "Use the structured payload below. Do not treat the conversation as an unlabeled transcript.",
+    `You are Stayhand — a sharp, empathetic message coach. You read conversations like a therapist reads body language.`,
+    ``,
+    `Your job: analyze ${userName}'s draft reply to ${otherName} and decide if it needs a pause before sending.`,
+    ``,
+    `CONVERSATION:`,
     JSON.stringify(
       {
-        user: userName,
-        other_person: otherName,
-        conversation_kind: input.conversationKind ?? "human",
-        bot_persona: persona,
-        user_behavior_summary: buildUserBehaviourSummary(payload.conversation_context),
-        conversation_context: payload.conversation_context,
-        latest_incoming_message: payload.latest_incoming_message,
+        participants: { user: userName, other: otherName },
+        kind: input.conversationKind ?? "human",
+        persona,
+        history: payload.conversation_context.slice(-10),
+        latest_from_other: payload.latest_incoming_message,
         user_draft: payload.user_draft,
       },
       null,
       2
     ),
-    "",
-    "Instructions:",
-    "1. Decide whether to intervene. Set should_intervene to false if the message is safe, direct, and calm. Set to true if it needs review.",
-    "2. If should_intervene is false, verdict MUST be 'good', issue_type MUST be 'none', warning_badge, ai_review, try_message, and why_appeared MUST be null.",
-    "3. Do not interrupt the user just to say the message is okay.",
-    "4. The Try message must be a clearly improved version of the user's draft. It must not simply repeat the draft.",
-    "5. If the draft is vague (e.g. 'what do you mean'), the Try must be a specific question grounded in the latest incoming message.",
-    "6. Do not invent facts, excuses, reasons, or background NOT present in the conversation.",
-    "7. Infer reply_type from the conversation. Do not default to apology.",
-    "8. If Try is a question, reply_type must be 'question' or 'clarification' — NOT 'direct_answer'.",
-    "9. The AI Review must name the actual issue in THIS conversation. Avoid all generic text.",
-    "10. NEVER use these phrases: 'raised something specific', 'make sure your reply directly addresses', 'what they actually said'.",
-    "11. Before returning, internally verify consistency: Does try_message respond to latest_incoming_message? Is try_message better than user_draft? If should_intervene is false, are all text fields null?",
-    "",
-    "Return ONLY valid JSON with this exact shape:",
+    ``,
+    `RULES:`,
+    `1. If the draft is calm, relevant, and won't cause regret → should_intervene: false. Don't interrupt good messages.`,
+    `2. If the draft is vague, aggressive, dismissive, off-topic, or emotionally risky → should_intervene: true.`,
+    `3. When intervening, your "try_message" must be a genuinely better version — not a minor rewording. Ground it in the conversation.`,
+    `4. Your "ai_review" must be one sharp, specific sentence about THIS conversation — never generic advice.`,
+    `5. "other_party_emotion" must capture what ${otherName} is likely feeling right now based on the conversation — use an emoji + short phrase (e.g. "😤 frustrated and unheard" or "😟 anxious about the deadline").`,
+    `6. Do NOT invent facts, promises, or context not already in the conversation.`,
+    `7. If should_intervene is false, set ai_review, try_message, why_appeared, and warning_badge to null.`,
+    ``,
+    `Return ONLY valid JSON:`,
     JSON.stringify({
       should_intervene: true,
-      intervention_reason: "One short reason explaining the decision.",
+      intervention_reason: "short reason",
+      other_party_emotion: `emoji + what ${otherName} is feeling`,
       reply_type: "apology | clarification | disagreement | explanation | question | reassurance | boundary_setting | de_escalation | casual_reply | correction | empathy | direct_answer | other",
       verdict: "good | needs_improvement",
       heat: "calm | rising | tense",
       risk_score: 0,
       issue_type: "none | off_topic | too_aggressive | too_vague | misses_question | missing_empathy | unclear | contradicts_context",
-      ai_review: `If should_intervene is true, write one specific sentence. If false, write null.`,
-      why_appeared: "If should_intervene is true, short reason. If false, null.",
+      ai_review: "One sharp sentence about the specific issue in this draft.",
+      why_appeared: "Short trigger reason or null",
       warning_badge: null,
-      try_message: "If should_intervene is true, improved draft. If false, null.",
+      try_message: "A clearly better version of the draft, or null",
       risk_factors: [],
       recommended_cooldown_seconds: 0,
-      bot_context_hint: persona ? `One short phrase about how ${otherName} responds.` : undefined,
-      other_party_state: persona ? undefined : `One short sentence about what ${otherName} is feeling and what they need.`,
+      bot_context_hint: persona ? `How ${otherName} tends to respond` : undefined,
     }),
   ].join("\n");
 }
+
 
 function parseReplyType(value: unknown, fallback: ReplyType): ReplyType {
   return typeof value === "string" && REPLY_TYPES.includes(value as ReplyType) ? value as ReplyType : fallback;
@@ -549,6 +530,7 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
     heat_trajectory: computeHeatTrajectory(normalizeCoachPayload(input).conversation_context),
     bot_context_hint: typeof parsed.bot_context_hint === "string" ? parsed.bot_context_hint.trim() : fallback.bot_context_hint,
     other_party_state: typeof parsed.other_party_state === "string" ? parsed.other_party_state.trim() : fallback.other_party_state,
+    other_party_emotion: typeof parsed.other_party_emotion === "string" ? parsed.other_party_emotion.trim() : fallback.other_party_emotion,
   });
   return normalized;
 }
@@ -647,12 +629,12 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
   let prompt = basePrompt;
   let lastModel: string | null = null;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 1; attempt += 1) {
     try {
       const { parsed, model } = await generateJson<RawCoachResponse>({
         prompt,
-        temperature: attempt === 0 ? 0.25 : 0.15,
-        timeoutMs: 12000,
+        temperature: 0.25,
+        timeoutMs: 9000,
       });
       lastModel = model;
       const result = reconcileCoachLabels(normalizeCoachResponse(input, parsed, fallback));
@@ -660,14 +642,10 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
       if (!validationErrors.length) {
         return { result, live: true, model };
       }
-      prompt = [
-        basePrompt,
-        "",
-        "Your previous JSON failed validation:",
-        validationErrors.map((error) => `- ${error}`).join("\n"),
-        "Regenerate the full JSON response. Do not add explanation.",
-      ].join("\n");
-    } catch {
+      // Validation failed — log and fall through to fallback immediately
+      console.warn("[reply-service] validation failed:", validationErrors);
+    } catch (err) {
+      console.warn("[reply-service] AI call failed:", err instanceof Error ? err.message : err);
       break;
     }
   }

@@ -124,6 +124,8 @@ export interface ReplyAnalyzeResult {
   bot_context_hint: string;
   /** For human conversations: a plain-English read of what the other party seems to be feeling. */
   other_party_state?: string;
+  /** Emoji + short phrase describing the other person's emotional state. */
+  other_party_emotion?: string;
 }
 
 export interface BuyProduct {

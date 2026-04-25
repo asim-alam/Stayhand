@@ -491,6 +491,12 @@ export function ReplyLiveDemo() {
                         {review.analysis.bot_context_hint}
                       </p>
                     )}
+                    {(review.analysis.other_party_emotion || review.analysis.other_party_state) && (
+                      <p className="reply-review-card__context-chip reply-review-card__context-chip--human">
+                        <span className="reply-review-card__context-label">reading the room · </span>
+                        {review.analysis.other_party_emotion || review.analysis.other_party_state}
+                      </p>
+                    )}
                     <p className="reply-review-card__guidance">{review.analysis.ai_review || review.analysis.guidance}</p>
                     <p className="reply-review-card__try">
                       <span>try:</span>

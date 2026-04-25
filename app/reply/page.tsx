@@ -860,11 +860,11 @@ export default function ReplyPage() {
                         {review.analysis.bot_context_hint}
                       </p>
                     )}
-                    {/* Human other-party state chip */}
-                    {review.analysis.other_party_state && (
+                    {/* Human other-party state/emotion chip */}
+                    {(review.analysis.other_party_emotion || review.analysis.other_party_state) && (
                       <p className="reply-review-card__context-chip reply-review-card__context-chip--human">
                         <span className="reply-review-card__context-label">reading the room · </span>
-                        {review.analysis.other_party_state}
+                        {review.analysis.other_party_emotion || review.analysis.other_party_state}
                       </p>
                     )}
                     {/* Main guidance */}
