@@ -90,6 +90,8 @@ const DEMO_BOTS: DemoBot[] = [
 ];
 
 const EMPTY_ANALYSIS: ReplyAnalyzeResult = {
+  should_intervene: false,
+  intervention_reason: "",
   reply_type: "other",
   verdict: "good",
   heat_label: "calm",
@@ -142,6 +144,8 @@ function wordCount(value: string): number {
 
 function fallbackAnalysis(bot: DemoBot, draft: string): ReplyAnalyzeResult {
   return {
+    should_intervene: true,
+    intervention_reason: "High heat detected",
     reply_type: "de_escalation",
     verdict: "needs_improvement",
     heat_label: "tense",
@@ -270,6 +274,12 @@ export function ReplyLiveDemo() {
       }
       const next = data.result;
       setAnalysis(next);
+
+      if (next.should_intervene === false) {
+        sendNow(text, { heat: next.heat, category: next.category });
+        return;
+      }
+
       setReview({
         original: text,
         suggestion: next.try_message.trim() || next.softened.trim() || text,
@@ -482,16 +492,6 @@ export function ReplyLiveDemo() {
                       </p>
                     )}
                     <p className="reply-review-card__guidance">{review.analysis.ai_review || review.analysis.guidance}</p>
-                    {review.analysis.warning_badge && (
-                      <span className="reply-warning-badge">{review.analysis.warning_badge}</span>
-                    )}
-                    {review.analysis.risk_factors.length > 0 && (
-                      <div className="reply-review-card__risks">
-                        {review.analysis.risk_factors.map((factor) => (
-                          <span key={factor} className="reply-risk-tag">{factor}</span>
-                        ))}
-                      </div>
-                    )}
                     <p className="reply-review-card__try">
                       <span>try:</span>
                       {review.analysis.try_message || review.suggestion}

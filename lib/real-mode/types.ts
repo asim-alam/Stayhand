@@ -102,6 +102,8 @@ export interface ReplyAnalyzeRequest {
 }
 
 export interface ReplyAnalyzeResult {
+  should_intervene: boolean;
+  intervention_reason: string;
   reply_type: ReplyType;
   verdict: ReplyVerdict;
   heat_label: ReplyHeatLabel;

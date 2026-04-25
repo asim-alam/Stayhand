@@ -77,6 +77,8 @@ type CoachPayload = {
 };
 
 type RawCoachResponse = {
+  should_intervene?: unknown;
+  intervention_reason?: unknown;
   reply_type?: unknown;
   verdict?: unknown;
   heat?: unknown;
@@ -236,10 +238,20 @@ function reconcileCoachLabels(result: ReplyAnalyzeResult): ReplyAnalyzeResult {
   // Fix contradictory verdict
   if (next.issue_type !== "none" && next.verdict === "good") next.verdict = "needs_improvement";
   if (next.warning_badge && next.verdict === "good") next.verdict = "needs_improvement";
-  // Add missing badge for vague issues
-  if (next.issue_type === "too_vague" && !next.warning_badge) next.warning_badge = "needs more clarity";
-  if (next.issue_type === "too_aggressive" && !next.warning_badge) next.warning_badge = "tone may escalate";
-  if (next.issue_type === "misses_question" && !next.warning_badge) next.warning_badge = "misses the question";
+  // Consistency rule for should_intervene
+  if (!next.should_intervene) {
+    next.verdict = "good";
+    next.issue_type = "none";
+    next.warning_badge = null;
+    next.ai_review = "";
+    next.try_message = "";
+    next.why_appeared = "";
+  } else {
+    // Add missing badge for vague issues
+    if (next.issue_type === "too_vague" && !next.warning_badge) next.warning_badge = "needs more clarity";
+    if (next.issue_type === "too_aggressive" && !next.warning_badge) next.warning_badge = "tone may escalate";
+    if (next.issue_type === "misses_question" && !next.warning_badge) next.warning_badge = "misses the question";
+  }
   return next;
 }
 
@@ -347,7 +359,12 @@ export function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeR
     whyAppeared = "Routine check";
   }
 
+  const shouldIntervene = heat >= 35 || issueType !== "none";
+  const interventionReason = shouldIntervene ? "High heat or active issue detected" : "Draft is safe and clear";
+
   return {
+    should_intervene: shouldIntervene,
+    intervention_reason: interventionReason,
     reply_type: replyType,
     verdict,
     heat_label: heatLabel,
@@ -382,7 +399,30 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
 
   return [
     "You are an AI message coach inside Stayhand's reply composer.",
-    "Review the signed-in user's draft before they send it.",
+    "Every draft is analyzed, but not every draft should interrupt the user.",
+    "Your first job is to decide whether Stayhand should intervene before the message is sent.",
+    "Only intervene when the draft would genuinely benefit from review.",
+    "",
+    "A message should be allowed to send directly when it is:",
+    "- relevant to the latest incoming message",
+    "- clear enough",
+    "- calm or neutral in tone",
+    "- not likely to escalate conflict",
+    "- not missing an important question",
+    "- not introducing unrelated context",
+    "- not likely to cause regret",
+    "",
+    "A message should trigger review when it is:",
+    "- unclear",
+    "- too vague",
+    "- emotionally risky",
+    "- defensive",
+    "- aggressive",
+    "- dismissive",
+    "- off-topic",
+    "- missing the other person’s point",
+    "- likely to escalate tension",
+    "- likely to be regretted",
     "",
     "Use the structured payload below. Do not treat the conversation as an unlabeled transcript.",
     JSON.stringify(
@@ -401,40 +441,35 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
     ),
     "",
     "Instructions:",
-    "1. You are a message coach inside Stayhand. Your only job is to help the signed-in user send a better message in THIS exact conversation — not a generic one.",
-    "2. The Try message must be a clearly improved version of the user's draft. It must not simply repeat the draft.",
-    "3. If the draft is vague (e.g. 'what do you mean', 'ok', 'huh'), the Try must be a specific question or answer grounded in the latest incoming message.",
-    "4. Do not invent facts, excuses, reasons, arguments, promises, or background NOT present in the conversation payload.",
-    "5. Infer reply_type from the conversation. Do not default to apology.",
-    "6. If Try is a question, reply_type must be 'question' or 'clarification' — NOT 'direct_answer'.",
-    "7. If Try gives an answer, reply_type should be 'direct_answer' or 'explanation'.",
-    "8. The AI Review must name the actual issue in THIS conversation. Avoid all generic text.",
-    "9. NEVER use these phrases: 'raised something specific', 'make sure your reply directly addresses', 'may not address what they actually said'.",
-    "10. The warning_badge, heat label, reply_type, ai_review, verdict, issue_type, and try_message must all agree with each other.",
-    "11. If issue_type is not 'none', verdict must be 'needs_improvement'.",
-    "12. If warning_badge is non-null, verdict must be 'needs_improvement'.",
-    "13. Before returning, internally verify: Does try_message respond to the latest_incoming_message? Is try_message clearly better than user_draft? Are reply_type and try_message consistent?",
-    "",
-    "Bad example:",
-    "User draft: 'what do you mean' / Try: 'what do you mean' — REJECTED. Try must improve.",
-    "Good example:",
-    "User draft: 'what do you mean' / latest incoming: 'okay tell me what you know' / Try: 'What part do you want me to explain first? I can tell you what I know.'",
+    "1. Decide whether to intervene. Set should_intervene to false if the message is safe, direct, and calm. Set to true if it needs review.",
+    "2. If should_intervene is false, verdict MUST be 'good', issue_type MUST be 'none', warning_badge, ai_review, try_message, and why_appeared MUST be null.",
+    "3. Do not interrupt the user just to say the message is okay.",
+    "4. The Try message must be a clearly improved version of the user's draft. It must not simply repeat the draft.",
+    "5. If the draft is vague (e.g. 'what do you mean'), the Try must be a specific question grounded in the latest incoming message.",
+    "6. Do not invent facts, excuses, reasons, or background NOT present in the conversation.",
+    "7. Infer reply_type from the conversation. Do not default to apology.",
+    "8. If Try is a question, reply_type must be 'question' or 'clarification' — NOT 'direct_answer'.",
+    "9. The AI Review must name the actual issue in THIS conversation. Avoid all generic text.",
+    "10. NEVER use these phrases: 'raised something specific', 'make sure your reply directly addresses', 'what they actually said'.",
+    "11. Before returning, internally verify consistency: Does try_message respond to latest_incoming_message? Is try_message better than user_draft? If should_intervene is false, are all text fields null?",
     "",
     "Return ONLY valid JSON with this exact shape:",
     JSON.stringify({
+      should_intervene: true,
+      intervention_reason: "One short reason explaining the decision.",
       reply_type: "apology | clarification | disagreement | explanation | question | reassurance | boundary_setting | de_escalation | casual_reply | correction | empathy | direct_answer | other",
       verdict: "good | needs_improvement",
       heat: "calm | rising | tense",
       risk_score: 0,
       issue_type: "none | off_topic | too_aggressive | too_vague | misses_question | missing_empathy | unclear | contradicts_context",
-      ai_review: `One specific sentence about what ${otherName} is asking or feeling and whether the draft handles it.`,
-      why_appeared: "Short trigger reason",
+      ai_review: `If should_intervene is true, write one specific sentence. If false, write null.`,
+      why_appeared: "If should_intervene is true, short reason. If false, null.",
       warning_badge: null,
-      try_message: "One short natural text the user could send that is directly grounded in their draft.",
+      try_message: "If should_intervene is true, improved draft. If false, null.",
       risk_factors: [],
       recommended_cooldown_seconds: 0,
-      bot_context_hint: persona ? `One short phrase about how ${otherName} tends to respond.` : undefined,
-      other_party_state: persona ? undefined : `One short sentence about what ${otherName} seems to need.`,
+      bot_context_hint: persona ? `One short phrase about how ${otherName} responds.` : undefined,
+      other_party_state: persona ? undefined : `One short sentence about what ${otherName} is feeling and what they need.`,
     }),
   ].join("\n");
 }
@@ -485,7 +520,12 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
     ? parsed.risk_factors.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 3)
     : fallback.risk_factors;
 
+  const shouldIntervene = typeof parsed.should_intervene === "boolean" ? parsed.should_intervene : fallback.should_intervene;
+  const interventionReason = typeof parsed.intervention_reason === "string" ? parsed.intervention_reason : fallback.intervention_reason;
+
   const normalized = reconcileCoachLabels({
+    should_intervene: shouldIntervene,
+    intervention_reason: interventionReason,
     reply_type: replyType,
     verdict,
     heat_label: heatLabel,
@@ -516,6 +556,13 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
 function validateCoachResult(input: ReplyAnalyzeRequest, result: ReplyAnalyzeResult): string[] {
   const payload = normalizeCoachPayload(input);
   const errors: string[] = [];
+  
+  if (!result.should_intervene) {
+    if (result.issue_type !== "none") errors.push("issue_type must be none if should_intervene is false");
+    if (result.verdict !== "good") errors.push("verdict must be good if should_intervene is false");
+    return errors;
+  }
+
   const latest = payload.latest_incoming_message?.message ?? "";
   const draft = payload.user_draft.message;
   const tryMessage = result.try_message;
@@ -605,7 +652,7 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
       const { parsed, model } = await generateJson<RawCoachResponse>({
         prompt,
         temperature: attempt === 0 ? 0.25 : 0.15,
-        timeoutMs: 30000,
+        timeoutMs: 12000,
       });
       lastModel = model;
       const result = reconcileCoachLabels(normalizeCoachResponse(input, parsed, fallback));

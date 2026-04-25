@@ -87,6 +87,8 @@ type SocketEvent =
   | { type: "invite.accepted"; conversation: ReplyConversation };
 
 const EMPTY_ANALYSIS: ReplyAnalyzeResult = {
+  should_intervene: false,
+  intervention_reason: "",
   reply_type: "other",
   verdict: "good",
   heat_label: "calm",
@@ -580,13 +582,21 @@ export default function ReplyPage() {
         throw new Error(data.error ?? "failed to review draft");
       }
       const next = data.result ?? analysis;
-      const suggestion = next.try_message.trim() || next.softened.trim() || text;
+      const suggestion = next.try_message?.trim() || next.softened?.trim() || text;
       setAnalysis(next);
+      
+      const newMeta = { ...meta, heat: next.heat, category: meta.category ?? next.category };
+
+      if (next.should_intervene === false) {
+        sendNow(text, newMeta);
+        return;
+      }
+
       setReview({
         original: text,
         suggestion,
         analysis: next,
-        meta: { ...meta, heat: next.heat, category: meta.category ?? next.category },
+        meta: newMeta,
       });
       setComposerError("");
     } catch (error) {
@@ -602,14 +612,6 @@ export default function ReplyPage() {
     if (!text) return;
     if (review) {
       sendReviewedDraft();
-      return;
-    }
-    if (activeConversation?.kind === "human") {
-      void reviewDraft({ heat: analysis.heat, category: analysis.category });
-      return;
-    }
-    if (analysis.issue_type === "none" && analysis.heat < 60) {
-      sendNow(text, { heat: analysis.heat, category: analysis.category });
       return;
     }
     void reviewDraft({ heat: analysis.heat, category: analysis.category });
@@ -867,17 +869,6 @@ export default function ReplyPage() {
                     )}
                     {/* Main guidance */}
                     <p className="reply-review-card__guidance">{review.analysis.ai_review || review.analysis.guidance}</p>
-                    {review.analysis.warning_badge && (
-                      <span className="reply-warning-badge">{review.analysis.warning_badge}</span>
-                    )}
-                    {/* Risk factors as tags */}
-                    {review.analysis.risk_factors.length > 0 && (
-                      <div className="reply-review-card__risks">
-                        {review.analysis.risk_factors.map((factor, i) => (
-                          <span key={i} className="reply-risk-tag">{factor}</span>
-                        ))}
-                      </div>
-                    )}
                     {/* Softened suggestion */}
                     <p className="reply-review-card__try">
                       <span>try:</span>
