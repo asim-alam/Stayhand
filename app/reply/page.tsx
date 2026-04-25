@@ -7,7 +7,7 @@ import { HeatMeter } from "@/components/real-mode/heat-meter";
 import { HoldSendButton } from "@/components/real-mode/hold-send-button";
 import { ReadAloudGate } from "@/components/real-mode/read-aloud-gate";
 import { SoftenSheet } from "@/components/real-mode/soften-sheet";
-import type { ReplyAnalyzeResult, ReplyCategory, ReplyCoachMessage, BotPersona } from "@/lib/real-mode/types";
+import type { ReplyAnalyzeResult, ReplyCategory, ReplyCoachMessage, BotPersona, MessageOutcome, UserActionType } from "@/lib/real-mode/types";
 
 // ---------------------------------------------------------------------------
 // Bot personas (mirrors server-side REPLY_BOTS — safe to duplicate, just metadata)
@@ -71,6 +71,7 @@ type SendMeta = {
 type PendingSend = {
   text: string;
   meta: SendMeta;
+  outcome?: MessageOutcome;
 };
 
 type ReviewState = {
@@ -413,14 +414,14 @@ export default function ReplyPage() {
     return true;
   }
 
-  async function deliverMessage(body: string, meta: SendMeta) {
+  async function deliverMessage(body: string, meta: SendMeta, outcome?: MessageOutcome) {
     if (!activeId || !body.trim()) return;
     setSending(true);
     try {
       const response = await fetch("/api/reply/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: activeId, body, friction: meta }),
+        body: JSON.stringify({ conversationId: activeId, body, friction: meta, outcome }),
       });
       const data = (await response.json()) as {
         created?: ReplyMessage[];
@@ -439,10 +440,40 @@ export default function ReplyPage() {
     }
   }
 
-  function sendNow(text: string, meta: SendMeta) {
-    if (maybeRequireReadAloud({ text, meta })) return;
-    void deliverMessage(text, meta);
+  function sendNow(text: string, meta: SendMeta, outcome?: MessageOutcome) {
+    if (maybeRequireReadAloud({ text, meta, outcome })) return;
+    void deliverMessage(text, meta, outcome);
     resetComposer();
+  }
+
+  function buildOutcome(action: UserActionType, finalMessage: string): MessageOutcome | undefined {
+    if (!review || !activeConversation) return undefined;
+    const otherPartyName = activeConversation.kind === "human"
+      ? activeConversation.participants.find((p) => p.type === "user" && p.id !== user?.id)?.displayName || "Unknown"
+      : activeConversation.title;
+      
+    const incoming = [...messages].reverse().find((message) => message.senderId !== user?.id)?.body || "";
+      
+    return {
+      id: crypto.randomUUID(),
+      surface: "reply",
+      conversation_id: activeId || "",
+      other_person_name: otherPartyName,
+      user_name: user?.displayName || "You",
+      timestamp: new Date().toISOString(),
+      latest_incoming_message: incoming,
+      user_draft: review.original,
+      ai_review: review.analysis.ai_review || review.analysis.guidance || "No review",
+      warning_badge: review.analysis.warning_badge || null,
+      reply_type: review.analysis.reply_type || "other",
+      issue_type: review.analysis.issue_type || "none",
+      heat_before: review.analysis.heat || 0,
+      heat_after: action === "sent_original" ? (review.analysis.heat || 0) : Math.max(0, (review.analysis.heat || 0) - 30),
+      try_message: review.suggestion,
+      final_sent_message: finalMessage,
+      user_action: action,
+      outcome_summary: action === "used_try" ? "User accepted the Try suggestion." : action === "edited_try" ? "User edited the suggestion before sending." : "User sent their original draft despite friction."
+    };
   }
 
   async function reviewDraft(meta: SendMeta = {}) {
@@ -515,25 +546,29 @@ export default function ReplyPage() {
   function sendOriginal() {
     const text = review?.original ?? draft.trim();
     if (!text) return;
-    sendNow(text, { ...(review?.meta ?? {}), sentAnyway: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category });
+    const outcome = review ? buildOutcome("sent_original", text) : undefined;
+    sendNow(text, { ...(review?.meta ?? {}), sentAnyway: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcome);
   }
 
   function sendSoftened() {
     const text = review?.suggestion.trim() || analysis.softened.trim();
     if (!text) return;
-    sendNow(text, { ...(review?.meta ?? {}), softened: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category });
+    const outcome = review ? buildOutcome("used_try", text) : undefined;
+    sendNow(text, { ...(review?.meta ?? {}), softened: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcome);
   }
 
   function sendReviewedDraft() {
     if (!review) return;
     const text = draft.trim();
     if (!text) return;
+    const action = text === review.suggestion ? "used_try" : (text === review.original ? "sent_original" : "edited_try");
+    const outcome = buildOutcome(action, text);
     sendNow(text, {
       ...review.meta,
       softened: text !== review.original,
       heat: review.analysis.heat,
       category: review.analysis.category,
-    });
+    }, outcome);
   }
 
   function applySuggestion() {
@@ -543,7 +578,7 @@ export default function ReplyPage() {
 
   function confirmReadAloud() {
     if (!pendingReadAloud) return;
-    void deliverMessage(pendingReadAloud.text, pendingReadAloud.meta);
+    void deliverMessage(pendingReadAloud.text, pendingReadAloud.meta, pendingReadAloud.outcome);
     setPendingReadAloud(null);
     resetComposer();
   }

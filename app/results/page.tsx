@@ -1,5 +1,7 @@
-import { ResultsDashboard } from "@/components/demo/results-dashboard";
+import { OutcomesDashboard } from "@/components/real-mode/outcomes-dashboard";
+
+export const metadata = { title: "Outcomes - Stayhand" };
 
 export default function ResultsPage() {
-  return <ResultsDashboard />;
+  return <OutcomesDashboard />;
 }

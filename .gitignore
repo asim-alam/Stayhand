@@ -1,4 +1,4 @@
-.env
+.env.local
 node_modules/
 *.log
 .next/
@@ -12,3 +12,4 @@ progress.md
 Hackathon.md
 AGENT.md
 SKILL_BUILD_SECOND_THOUGHT.md
+.tmp-edge-profile/

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { LedgerEntry, MCPServerConfig } from "@/lib/types/runtime";
+import type { MessageOutcome } from "@/lib/real-mode/types";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "stayhand.sqlite");
@@ -96,6 +97,27 @@ function ensureDb(): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (conversation_id, subject_id)
     );
+    CREATE TABLE IF NOT EXISTS message_outcomes (
+      id TEXT PRIMARY KEY,
+      surface TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      other_person_name TEXT NOT NULL,
+      user_name TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      latest_incoming_message TEXT NOT NULL,
+      user_draft TEXT NOT NULL,
+      ai_review TEXT NOT NULL,
+      warning_badge TEXT,
+      reply_type TEXT NOT NULL,
+      issue_type TEXT NOT NULL,
+      heat_before INTEGER NOT NULL,
+      heat_after INTEGER NOT NULL,
+      try_message TEXT NOT NULL,
+      final_sent_message TEXT NOT NULL,
+      user_action TEXT NOT NULL,
+      outcome_summary TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_outcomes_ts ON message_outcomes(timestamp);
   `);
 
   dbInstance = db;
@@ -167,4 +189,46 @@ export function persistLedgerEntry(entry: LedgerEntry): void {
   db.prepare(
     "INSERT OR REPLACE INTO ledger_entries (id, ts, source_id, mode, action, summary, saved, heat, quotient) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(entry.id, entry.ts, entry.sourceId, entry.mode, entry.action, entry.summary, entry.saved ?? null, entry.heat ?? null, entry.quotient ?? null);
+}
+
+export function getMessageOutcomes(limit = 50): MessageOutcome[] {
+  const db = ensureDb();
+  const rows = db.prepare("SELECT * FROM message_outcomes ORDER BY timestamp DESC LIMIT ?").all(limit) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    surface: row.surface,
+    conversation_id: row.conversation_id,
+    other_person_name: row.other_person_name,
+    user_name: row.user_name,
+    timestamp: row.timestamp,
+    latest_incoming_message: row.latest_incoming_message,
+    user_draft: row.user_draft,
+    ai_review: row.ai_review,
+    warning_badge: row.warning_badge,
+    reply_type: row.reply_type,
+    issue_type: row.issue_type,
+    heat_before: row.heat_before,
+    heat_after: row.heat_after,
+    try_message: row.try_message,
+    final_sent_message: row.final_sent_message,
+    user_action: row.user_action,
+    outcome_summary: row.outcome_summary,
+  }));
+}
+
+export function persistMessageOutcome(outcome: MessageOutcome): void {
+  const db = ensureDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO message_outcomes (
+      id, surface, conversation_id, other_person_name, user_name, timestamp,
+      latest_incoming_message, user_draft, ai_review, warning_badge,
+      reply_type, issue_type, heat_before, heat_after, try_message,
+      final_sent_message, user_action, outcome_summary
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    outcome.id, outcome.surface, outcome.conversation_id, outcome.other_person_name, outcome.user_name, outcome.timestamp,
+    outcome.latest_incoming_message, outcome.user_draft, outcome.ai_review, outcome.warning_badge,
+    outcome.reply_type, outcome.issue_type, outcome.heat_before, outcome.heat_after, outcome.try_message,
+    outcome.final_sent_message, outcome.user_action, outcome.outcome_summary
+  );
 }

@@ -10,6 +10,8 @@ import {
   sendReplyMessage,
   type ReplyFrictionMeta,
 } from "@/lib/reply/messaging-service";
+import { persistMessageOutcome } from "@/lib/runtime/db";
+import type { MessageOutcome } from "@/lib/real-mode/types";
 
 export const runtime = "nodejs";
 
@@ -44,11 +46,17 @@ export async function POST(request: Request) {
       conversationId?: string;
       body?: string;
       friction?: ReplyFrictionMeta;
+      outcome?: MessageOutcome;
     };
     if (typeof body.conversationId !== "string" || typeof body.body !== "string" || !body.body.trim()) {
       return NextResponse.json({ error: "conversationId and body are required" }, { status: 400 });
     }
     const result = await sendReplyMessage(user, body.conversationId, body.body, body.friction ?? {});
+    
+    if (body.outcome) {
+      persistMessageOutcome(body.outcome);
+    }
+    
     const participantIds = getConversationParticipantIds(body.conversationId);
     const sessionTokens = getActiveSessionTokensForUsers(participantIds);
     broadcastReplyEvent(sessionTokens, {

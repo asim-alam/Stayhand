@@ -154,3 +154,26 @@ export interface BuyVerdictResult {
   cheaper_alternative: string;
   urgency_score: number;
 }
+
+export type UserActionType = "used_try" | "edited_try" | "dismissed" | "sent_original" | "did_not_send";
+
+export interface MessageOutcome {
+  id: string;
+  surface: string; // e.g., "reply", "send", "buy"
+  conversation_id: string;
+  other_person_name: string;
+  user_name: string;
+  timestamp: string;
+  latest_incoming_message: string;
+  user_draft: string;
+  ai_review: string;
+  warning_badge: string | null;
+  reply_type: string;
+  issue_type: string;
+  heat_before: number;
+  heat_after: number;
+  try_message: string;
+  final_sent_message: string;
+  user_action: UserActionType;
+  outcome_summary: string;
+}

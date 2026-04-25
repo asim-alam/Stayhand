@@ -18,13 +18,13 @@ export function SiteHeader({
 
       <nav className="site-header__nav" aria-label="Primary">
         <Link href="/send" className="site-header__link">
-          Real features
+          Live App
         </Link>
         <Link href="/demo" className={`site-header__link ${active === "demo" ? "active" : ""}`}>
           Demo
         </Link>
         <Link href="/results" className={`site-header__link ${active === "results" ? "active" : ""}`}>
-          Results
+          Outcomes
         </Link>
       </nav>
     </header>

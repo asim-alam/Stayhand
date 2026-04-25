@@ -23,7 +23,7 @@ export default function DemoPage() {
               Try the demo →
             </a>
             <a href="/send" className="button ghost">
-              Try real features
+              Try Live App
             </a>
           </div>
         </div>
