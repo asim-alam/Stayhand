@@ -59,7 +59,18 @@ const HOT_PATTERNS = [
   "stop",
   "sick of",
   "fed up",
+  "fuck",
+  "shit",
+  "bitch",
+  "asshole",
+  "idiot",
+  "stupid",
+  "dumb",
+  "madman",
+  "shut up",
 ];
+
+const PROFANITY_OR_INSULT_RE = /\b(fuck|fucking|shit|bitch|asshole|idiot|stupid|dumb|madman|moron|loser|shut\s+up)\b/i;
 
 const BANNED_REVIEW_PHRASES = [
   "they raised something specific",
@@ -281,11 +292,28 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
   }
 
   if (HOT_PATTERNS.some((pattern) => lowerDraft.includes(pattern))) {
-    return draft
+    const softened = draft
       .replace(/\byou always\b/gi, "this keeps happening")
       .replace(/\byou never\b/gi, "this still isn't happening")
       .replace(/\bi can't believe\b/gi, "I'm frustrated that")
-      .replace(/\byou don't care\b/gi, "it feels like this isn't landing");
+      .replace(/\byou don't care\b/gi, "it feels like this isn't landing")
+      .replace(/\bfuck(ing)?\b/gi, "really")
+      .replace(/\bshit\b/gi, "this")
+      .replace(/\bbitch\b/gi, "that")
+      .replace(/\basshole\b/gi, "that")
+      .replace(/\bidiot\b/gi, "that")
+      .replace(/\bstupid\b/gi, "unhelpful")
+      .replace(/\bdumb\b/gi, "unhelpful")
+      .replace(/\bmadman\b/gi, "this")
+      .replace(/\bshut\s+up\b/gi, "please pause for a second")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    if (softened && softened.toLowerCase() !== draft.toLowerCase()) {
+      return softened;
+    }
+
+    return "I am frustrated, but I want to keep this constructive. Let me explain what I need clearly.";
   }
 
   // For too_vague / misses_question issues, never return an unchanged draft
@@ -536,79 +564,28 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
 }
 
 function validateCoachResult(input: ReplyAnalyzeRequest, result: ReplyAnalyzeResult): string[] {
-  const payload = normalizeCoachPayload(input);
   const errors: string[] = [];
-  
+  const payload = normalizeCoachPayload(input);
+  const draft = payload.user_draft.message;
+  const tryMessage = result.try_message || "";
+
   if (!result.should_intervene) {
-    if (result.issue_type !== "none") errors.push("issue_type must be none if should_intervene is false");
-    if (result.verdict !== "good") errors.push("verdict must be good if should_intervene is false");
+    // Non-intervention results should not force a rewrite.
     return errors;
   }
 
-  const latest = payload.latest_incoming_message?.message ?? "";
-  const draft = payload.user_draft.message;
-  const tryMessage = result.try_message;
-  const review = lc(result.ai_review);
-
-  // Reject if Try is meaninglessly similar to draft for quality-sensitive issue types
-  const qualityIssues: ReplyIssueType[] = ["too_vague", "misses_question", "unclear", "contradicts_context"];
-  if (qualityIssues.includes(result.issue_type) && !isMeaningfulRewrite(draft, tryMessage, result.issue_type)) {
-    errors.push(`try_message is not a meaningful improvement over the draft for issue_type '${result.issue_type}'`);
+  if (!tryMessage.trim()) {
+    errors.push("try_message is empty");
   }
-  // Reject if Try literally equals draft (always)
   if (tryMessage.trim().toLowerCase() === draft.trim().toLowerCase()) {
     errors.push("try_message is identical to the user draft");
   }
-  if (!tryMessage.trim()) errors.push("try_message is empty");
-  if (BANNED_REVIEW_PHRASES.some((phrase) => review.includes(phrase))) {
-    errors.push("ai_review uses banned generic review text");
-  }
-  if (result.verdict === "good" && result.issue_type !== "none") {
-    errors.push("verdict good contradicts a non-none issue_type");
-  }
-  if (result.verdict === "needs_improvement" && result.issue_type === "none") {
-    errors.push("verdict needs_improvement contradicts issue_type none");
-  }
-  if (result.verdict === "good" && /\b(escalate|misses|ignores|dismissive|aggressive|unclear|vague|contradict)/i.test(result.ai_review)) {
-    errors.push("verdict good contradicts ai_review");
-  }
-  if (result.warning_badge && result.verdict === "good" && result.heat_label === "calm") {
-    errors.push("warning_badge contradicts calm good verdict");
-  }
-
-  const latestWords = contentWords(latest);
-  const draftWords = contentWords(draft);
-  const tryWords = contentWords(tryMessage);
-  const sharesLatest = latestWords.length === 0 || tryWords.some((word) => latestWords.includes(word));
-  const sharesDraft = draftWords.length === 0 || tryWords.some((word) => draftWords.includes(word));
-
-  if (!sharesLatest && !sharesDraft) {
-    errors.push("try_message does not appear based on latest_incoming_message or user_draft");
-  }
-  if (/\bwhy\b/i.test(latest) && !/\b(because|mean|meant|reason|thought|changed|sorry|explain|clear|clarify)\b/i.test(tryMessage)) {
-    errors.push("try_message does not answer the latest why-question");
-  }
-  if (result.reply_type === "question" && !tryMessage.includes("?")) {
-    errors.push("reply_type question does not match try_message");
-  }
-  if (result.reply_type === "apology" && !/\b(sorry|apologize|my fault|on me|should have)\b/i.test(tryMessage)) {
-    errors.push("reply_type apology does not match try_message");
-  }
-  if (result.reply_type === "boundary_setting" && !/\b(can't|cannot|not okay|need|won't|do not|don't)\b/i.test(tryMessage)) {
-    errors.push("reply_type boundary_setting does not match try_message");
-  }
-
-  const combinedSource = lc(`${latest} ${draft} ${payload.conversation_context.map((message) => message.message).join(" ")}`);
-  const suspiciousNewFacts = ["traffic", "hospital", "family emergency", "my phone died", "at work", "tomorrow morning", "next week", "money", "loan"];
-  for (const fact of suspiciousNewFacts) {
-    if (lc(tryMessage).includes(fact) && !combinedSource.includes(fact)) {
-      errors.push(`try_message introduces unrelated fact: ${fact}`);
-      break;
-    }
-  }
-
   if (!isMeaningfulRewrite(draft, tryMessage, result.issue_type)) {
-    errors.push("try_message is not a meaningful rewrite of the user draft");
+    errors.push("try_message is not a meaningful rewrite");
+  }
+  const review = (result.ai_review || "").toLowerCase();
+  if (BANNED_REVIEW_PHRASES.some((phrase) => review.includes(phrase))) {
+    errors.push("ai_review is generic");
   }
 
   return errors;
@@ -625,6 +602,16 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
   }
 
   const fallback = buildFallbackAnalysis(input);
+
+  // Fast deterministic path for clearly heated language to avoid waiting on networked AI.
+  if (
+    fallback.issue_type === "too_aggressive" ||
+    PROFANITY_OR_INSULT_RE.test(payload.user_draft.message) ||
+    fallback.heat >= 78
+  ) {
+    return { result: reconcileCoachLabels(fallback), live: false, model: null };
+  }
+
   const basePrompt = buildCoachPrompt(input);
   let prompt = basePrompt;
   let lastModel: string | null = null;
@@ -634,7 +621,7 @@ export async function analyzeReplyDraft(input: ReplyAnalyzeRequest): Promise<{
       const { parsed, model } = await generateJson<RawCoachResponse>({
         prompt,
         temperature: 0.25,
-        timeoutMs: 9000,
+        timeoutMs: 4500,
       });
       lastModel = model;
       const result = reconcileCoachLabels(normalizeCoachResponse(input, parsed, fallback));

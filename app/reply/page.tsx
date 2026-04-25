@@ -81,6 +81,13 @@ type ReviewState = {
   meta: SendMeta;
 };
 
+type AnalysisCache = {
+  draft: string;
+  conversationId: string | null;
+  result: ReplyAnalyzeResult;
+  at: number;
+};
+
 type SocketEvent =
   | { type: "message.created"; conversationId: string; messages: ReplyMessage[]; conversation: ReplyConversation }
   | { type: "conversation.updated"; conversation: ReplyConversation }
@@ -195,6 +202,7 @@ export default function ReplyPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeIdRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const latestAnalysisRef = useRef<AnalysisCache | null>(null);
 
   const stats = messages.reduce(
     (acc, message) => {
@@ -342,6 +350,12 @@ export default function ReplyPage() {
         if (cancelled) return;
         const next = data.result ?? EMPTY_ANALYSIS;
         setAnalysis(next);
+        latestAnalysisRef.current = {
+          draft: draft.trim(),
+          conversationId: activeId,
+          result: next,
+          at: Date.now(),
+        };
         setShowSoften(false);
         setComposerError("");
       } catch {
@@ -352,7 +366,7 @@ export default function ReplyPage() {
       } finally {
         if (!cancelled) setAnalyzing(false);
       }
-    }, 450);
+    }, 700);
 
     return () => {
       cancelled = true;
@@ -551,6 +565,32 @@ export default function ReplyPage() {
   async function reviewDraft(meta: SendMeta = {}) {
     const text = draft.trim();
     if (!text) return;
+
+    const cached = latestAnalysisRef.current;
+    if (
+      cached &&
+      cached.draft === text &&
+      cached.conversationId === activeId &&
+      Date.now() - cached.at < 8000
+    ) {
+      const next = cached.result;
+      const suggestion = next.try_message?.trim() || next.softened?.trim() || text;
+      setAnalysis(next);
+
+      const newMeta = { ...meta, heat: next.heat, category: meta.category ?? next.category };
+      if (next.should_intervene === false) {
+        sendNow(text, newMeta);
+        return;
+      }
+      setReview({
+        original: text,
+        suggestion,
+        analysis: next,
+        meta: newMeta,
+      });
+      return;
+    }
+
     setReviewing(true);
     setReview(null);
     setComposerError("");
@@ -584,6 +624,12 @@ export default function ReplyPage() {
       const next = data.result ?? analysis;
       const suggestion = next.try_message?.trim() || next.softened?.trim() || text;
       setAnalysis(next);
+      latestAnalysisRef.current = {
+        draft: text,
+        conversationId: activeId,
+        result: next,
+        at: Date.now(),
+      };
       
       const newMeta = { ...meta, heat: next.heat, category: meta.category ?? next.category };
 

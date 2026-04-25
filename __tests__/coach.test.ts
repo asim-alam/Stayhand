@@ -32,6 +32,22 @@ describe("Reply Coach Strict Validations", () => {
     expect(result.heat).toBeGreaterThanOrEqual(50);
   });
 
+  it("should distill profanity and insults into a calmer rewrite", () => {
+    const draft = "hello madman fuck you";
+    const result = buildFallbackAnalysis({
+      draft,
+      incomingMessage: "Why did you ignore me?",
+      userName: "Arif",
+      otherPartyName: "Mehidy",
+    });
+
+    expect(result.issue_type).toBe("too_aggressive");
+    expect(result.should_intervene).toBe(true);
+    expect(result.try_message.toLowerCase()).not.toContain("fuck");
+    expect(result.try_message.toLowerCase()).not.toContain("madman");
+    expect(result.try_message.toLowerCase()).not.toEqual(draft.toLowerCase());
+  });
+
   it("should not intercept calm, clear messages", () => {
     const draft = "That sounds good to me, see you at 5.";
     const result = buildFallbackAnalysis({

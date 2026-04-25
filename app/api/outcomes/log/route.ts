@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
-import { persistMessageOutcome } from "@/lib/runtime/db";
+import { persistStoredMoment } from "@/lib/runtime/moments-store";
 import { getReplyUserBySession, REPLY_SESSION_COOKIE } from "@/lib/reply/messaging-service";
 import { buildFallbackAnalysis } from "@/lib/real-mode/reply-service";
-import type { MessageOutcome, ReplyAnalyzeResult, UserActionType } from "@/lib/real-mode/types";
+import type { ReplyAnalyzeResult, UserActionType } from "@/lib/real-mode/types";
+import type { StayhandMoment } from "@/lib/runtime/db";
 
 export const runtime = "nodejs";
 
@@ -47,40 +48,30 @@ export async function POST(request: Request) {
       heatAfter = heuristic.heat;
     }
 
-    let outcomeSummary = "";
-    if (body.userAction === "used_try") outcomeSummary = "User accepted the Try suggestion.";
-    else if (body.userAction === "edited_try") outcomeSummary = "User edited the suggestion before sending.";
-    else if (body.userAction === "sent_original") outcomeSummary = "User sent their original draft despite friction.";
-    else if (body.userAction === "dismissed") outcomeSummary = "User dismissed the coach and continued writing.";
-    else if (body.userAction === "cooled") outcomeSummary = "User chose to cool down the message for later.";
-    else outcomeSummary = "Moment recorded.";
-
-    const outcome: MessageOutcome = {
+    const moment: StayhandMoment = {
       id: crypto.randomUUID(),
-      surface: body.surface || "reply",
       user_id: user.id,
-      conversation_id: body.conversationId,
-      other_person_name: body.otherPartyName || "Unknown",
-      user_name: user.displayName,
-      timestamp: new Date().toISOString(),
-      latest_incoming_message: body.latestIncomingMessage || "",
-      user_draft: body.originalDraft || "",
-      ai_review: body.reviewData.ai_review || body.reviewData.guidance || "No review",
-      why_appeared: body.reviewData.why_appeared || "High heat detected",
-      warning_badge: body.reviewData.warning_badge || null,
-      reply_type: body.reviewData.reply_type || "other",
-      issue_type: body.reviewData.issue_type || "none",
-      heat_before: body.reviewData.heat || 0,
-      heat_after: heatAfter,
-      try_message: body.reviewData.try_message || "",
-      final_sent_message: finalMessage,
+      anonymous_session_id: null,
+      surface: (body.surface as any) || "reply",
+      created_at: new Date().toISOString(),
+      title: body.conversationId ? `Reply to ${body.otherPartyName || "Unknown"}` : "Reply Moment",
+      status: body.userAction === "cooled" ? "cooled" :
+              body.userAction === "dismissed" || body.userAction === "sent_original" ? "dismissed" :
+              "completed",
+      trigger_reason: body.reviewData.why_appeared || "High heat detected",
+      heat_before: body.reviewData.heat || null,
+      heat_after: heatAfter ?? null,
+      original_input: body.originalDraft || null,
+      ai_review: body.reviewData.ai_review || body.reviewData.guidance || null,
+      ai_suggestion: body.reviewData.try_message || null,
+      final_output: finalMessage || null,
       user_action: body.userAction,
-      outcome_summary: outcomeSummary,
+      payload_json: JSON.stringify(body.reviewData),
     };
 
-    persistMessageOutcome(outcome);
+    await persistStoredMoment(moment);
 
-    return NextResponse.json({ success: true, outcomeId: outcome.id });
+    return NextResponse.json({ success: true, outcomeId: moment.id });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "failed to log outcome" },

@@ -254,7 +254,7 @@ function pg() {
       ssl: "require",
       max: 5,
       idle_timeout: 20,
-      connect_timeout: 15,
+      connect_timeout: 30,
     });
   }
   return pgClient;
