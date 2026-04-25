@@ -212,6 +212,34 @@ function getActionSet(surface: MomentSurface, revised: boolean): DemoAction[] {
   ];
 }
 
+function buildSuggestionChanges(surface: MomentSurface, signals: RiskSignal[]): string[] {
+  if (surface === "buy") {
+    return [
+      "Moves the decision out of the checkout rush.",
+      "Checks the purchase against goals and recent history.",
+      "Keeps control with the user instead of the countdown.",
+    ];
+  }
+
+  const ids = new Set(signals.map((signal) => signal.id));
+  const changes: string[] = [];
+
+  if (ids.has("emotional-language") || ids.has("heated-reply")) {
+    changes.push("Lowers blame and heat without hiding the core issue.");
+  }
+  if (ids.has("urgency-pressure") || ids.has("late-night-send")) {
+    changes.push("Replaces immediate pressure with a calmer next step.");
+  }
+  if (ids.has("relationship-risk") || ids.has("audience-risk")) {
+    changes.push("Protects the relationship cost around the message.");
+  }
+  if (ids.has("boundary-risk")) {
+    changes.push("Keeps the boundary concise instead of over-explaining.");
+  }
+
+  return (changes.length ? changes : ["Keeps the point, lowers the heat.", "Turns reaction into a clearer next step."]).slice(0, 3);
+}
+
 function buildAssessment(moment: Moment, fixture: ScenarioFixture, support: Awaited<ReturnType<typeof generateAiSupport>>, engineDecision: InterventionDecision): Assessment {
   const strongest = moment.riskSignals.slice().sort((left, right) => right.weight - left.weight);
   const topReasons = strongest.slice(0, 3).map((signal) => `${signal.label}. ${signal.detail}`);
@@ -250,6 +278,7 @@ function buildAssessment(moment: Moment, fixture: ScenarioFixture, support: Awai
     reasons: topReasons.length ? topReasons : engineDecision.reasons,
     recommendedActions: getActionSet(fixture.surface, moment.status === "revised"),
     aiSuggestion: support.suggestion,
+    suggestionChanges: buildSuggestionChanges(fixture.surface, strongest),
     reflectionPrompt: support.reflection,
     alternativeChoices: support.alternatives,
     aiLive: support.live,

@@ -1,5 +1,6 @@
 const http = require("http");
 const next = require("next");
+const { WebSocket, WebSocketServer } = require("ws");
 
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 4173);
@@ -12,6 +13,54 @@ app
   .prepare()
   .then(() => {
     const server = http.createServer((req, res) => handler(req, res));
+    const upgradeHandler = typeof app.getUpgradeHandler === "function" ? app.getUpgradeHandler() : null;
+    const replySockets = new Map();
+    const replyWss = new WebSocketServer({ noServer: true });
+
+    globalThis.__stayhandReplyBroadcast = (sessionTokens, event) => {
+      const payload = JSON.stringify(event);
+      sessionTokens.forEach((token) => {
+        const sockets = replySockets.get(token);
+        if (!sockets) return;
+        sockets.forEach((socket) => {
+          if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+        });
+      });
+    };
+
+    replyWss.on("connection", (socket, request) => {
+      const url = new URL(request.url || "", `http://${host}:${port}`);
+      const token = url.searchParams.get("session") || "";
+      if (!token) {
+        socket.close();
+        return;
+      }
+
+      if (!replySockets.has(token)) replySockets.set(token, new Set());
+      replySockets.get(token).add(socket);
+
+      socket.on("close", () => {
+        const sockets = replySockets.get(token);
+        if (!sockets) return;
+        sockets.delete(socket);
+        if (!sockets.size) replySockets.delete(token);
+      });
+    });
+
+    server.on("upgrade", (request, socket, head) => {
+      const url = new URL(request.url || "", `http://${host}:${port}`);
+      if (url.pathname !== "/ws/reply") {
+        if (upgradeHandler) {
+          upgradeHandler(request, socket, head);
+          return;
+        }
+        socket.destroy();
+        return;
+      }
+      replyWss.handleUpgrade(request, socket, head, (ws) => {
+        replyWss.emit("connection", ws, request);
+      });
+    });
 
     server.on("error", (error) => {
       if (error && error.code === "EADDRINUSE") {

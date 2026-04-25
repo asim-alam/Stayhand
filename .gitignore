@@ -5,7 +5,10 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-*
 docs/
+Otherproject/
 plan*.md
 PLAN*.md
 progress.md
 Hackathon.md
+AGENT.md
+SKILL_BUILD_SECOND_THOUGHT.md

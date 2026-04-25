@@ -37,6 +37,65 @@ function ensureDb(): DatabaseSync {
       heat INTEGER,
       quotient INTEGER
     );
+    CREATE TABLE IF NOT EXISTS reply_users (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL COLLATE NOCASE,
+      passcode_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_reply_users_display_name ON reply_users(display_name);
+    CREATE TABLE IF NOT EXISTS reply_sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reply_sessions_user_id ON reply_sessions(user_id);
+    CREATE TABLE IF NOT EXISTS reply_invites (
+      token TEXT PRIMARY KEY,
+      inviter_id TEXT NOT NULL,
+      accepted_by TEXT,
+      conversation_id TEXT,
+      created_at TEXT NOT NULL,
+      accepted_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS reply_conversations (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      bot_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_message_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS reply_participants (
+      conversation_id TEXT NOT NULL,
+      participant_id TEXT NOT NULL,
+      participant_type TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (conversation_id, participant_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reply_participants_participant_id ON reply_participants(participant_id);
+    CREATE TABLE IF NOT EXISTS reply_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      sender_type TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      friction_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reply_messages_conversation_id ON reply_messages(conversation_id, created_at);
+    CREATE TABLE IF NOT EXISTS reply_memory (
+      conversation_id TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (conversation_id, subject_id)
+    );
   `);
 
   dbInstance = db;

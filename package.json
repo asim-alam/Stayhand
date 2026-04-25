@@ -1,7 +1,7 @@
 {
-  "name": "hackathon",
+  "name": "stayhand",
   "version": "1.0.0",
-  "description": "Stayhand is a consumer-facing friction demo that helps people avoid regret before they send, buy, or reply.",
+  "description": "Every app makes you act faster. Stayhand makes you act better. Intentional friction for the moments that matter.",
   "main": "server.js",
   "directories": {
     "doc": "docs"
@@ -19,7 +19,8 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "next": "^16.2.4",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

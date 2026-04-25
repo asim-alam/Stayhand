@@ -67,6 +67,7 @@ export interface Assessment {
   reasons: string[];
   recommendedActions: DemoAction[];
   aiSuggestion: string;
+  suggestionChanges: string[];
   reflectionPrompt: string;
   alternativeChoices: string[];
   aiLive: boolean;
