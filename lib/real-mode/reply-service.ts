@@ -85,6 +85,7 @@ type RawCoachResponse = {
   ai_review?: unknown;
   warning_badge?: unknown;
   try_message?: unknown;
+  why_appeared?: unknown;
   risk_factors?: unknown;
   recommended_cooldown_seconds?: unknown;
   other_party_state?: unknown;
@@ -221,18 +222,7 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
   if (!draft) return "";
 
   if (replyType === "apology" || APOLOGY_PATTERNS.some((pattern) => lowerDraft.includes(pattern))) {
-    if (lowerLatest.includes("why") || lowerLatest.includes("what do you mean")) {
-      return `I'm sorry, ${otherName}. I didn't mean to dismiss it, and I should explain why I changed my mind instead of turning this into a fight.`;
-    }
-    return `I'm sorry. I didn't mean for it to land that way, and I want to handle this better.`;
-  }
-
-  if (lowerLatest.includes("why") || lowerLatest.includes("what do you mean")) {
-    return `I get why that sounds confusing. What I meant was that the idea feels different to me now, and I should have explained that more clearly.`;
-  }
-
-  if (lowerDraft.startsWith("no") || lowerDraft.includes("not doing")) {
-    return `I can't agree to that as-is, but I want to be clear about why instead of shutting the conversation down.`;
+    return draft.replace(/\but\b.*/i, "").trim(); // Cut off "but..." justifications in an apology
   }
 
   if (HOT_PATTERNS.some((pattern) => lowerDraft.includes(pattern))) {
@@ -246,7 +236,7 @@ function buildFallbackTryMessage(input: ReplyAnalyzeRequest, payload: CoachPaylo
   return draft;
 }
 
-function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeResult {
+export function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeResult {
   const payload = normalizeCoachPayload(input);
   const draft = payload.user_draft.message.trim();
   const latest = payload.latest_incoming_message?.message.trim() || "";
@@ -297,12 +287,16 @@ function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeResult {
       : "needs more clarity";
 
   let aiReview = "This draft fits the moment.";
+  let whyAppeared = "Routine check";
   if (topic && issueType === "too_aggressive") {
     aiReview = `${otherName} is pushing on "${topic}", so this wording answers with heat instead of explaining your point.`;
+    whyAppeared = "High heat detected";
   } else if (topic && issueType === "too_vague") {
     aiReview = `${otherName} is asking about "${topic}", so the reply needs a clearer answer than this draft gives.`;
+    whyAppeared = "Draft is too vague";
   } else if (topic) {
     aiReview = `${otherName} is focused on "${topic}", and this reply stays close enough to that point.`;
+    whyAppeared = "Routine check";
   }
 
   return {
@@ -311,6 +305,7 @@ function buildFallbackAnalysis(input: ReplyAnalyzeRequest): ReplyAnalyzeResult {
     heat_label: heatLabel,
     issue_type: issueType,
     ai_review: aiReview,
+    why_appeared: whyAppeared,
     warning_badge: warningBadge,
     try_message: tryMessage,
     heat,
@@ -367,6 +362,7 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
     "7. Never use these phrases or close variations: 'raised something specific', 'make sure your reply directly addresses what they said', 'may not address what they actually said'.",
     "8. The warning_badge, heat label, reply_type, ai_review, verdict, issue_type, and try_message must agree with each other.",
     "9. risk_score is a 0-100 app meter that must agree with heat: calm is usually 0-34, rising is usually 35-69, tense is usually 70-100.",
+    "10. The why_appeared string should be exactly 2-4 words explaining the trigger (e.g., 'High heat detected', 'Off-topic drift').",
     "",
     "Return ONLY valid JSON with this exact shape:",
     JSON.stringify({
@@ -376,8 +372,9 @@ function buildCoachPrompt(input: ReplyAnalyzeRequest): string {
       risk_score: 0,
       issue_type: "none | off_topic | too_aggressive | too_vague | misses_question | missing_empathy | unclear | contradicts_context",
       ai_review: `One specific sentence about what ${otherName} is asking or feeling and whether the draft handles it.`,
+      why_appeared: "Short trigger reason",
       warning_badge: null,
-      try_message: "One short natural text the user could send.",
+      try_message: "One short natural text the user could send that is directly grounded in their draft.",
       risk_factors: [],
       recommended_cooldown_seconds: 0,
       bot_context_hint: persona ? `One short phrase about how ${otherName} tends to respond.` : undefined,
@@ -419,6 +416,9 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
   const aiReview = typeof parsed.ai_review === "string" && parsed.ai_review.trim()
     ? parsed.ai_review.trim()
     : fallback.ai_review;
+  const whyAppeared = typeof parsed.why_appeared === "string" && parsed.why_appeared.trim()
+    ? parsed.why_appeared.trim()
+    : fallback.why_appeared;
   const tryMessage = typeof parsed.try_message === "string" && parsed.try_message.trim()
     ? parsed.try_message.trim()
     : fallback.try_message;
@@ -435,6 +435,7 @@ function normalizeCoachResponse(input: ReplyAnalyzeRequest, parsed: RawCoachResp
     heat_label: heatLabel,
     issue_type: issueType,
     ai_review: aiReview,
+    why_appeared: whyAppeared,
     warning_badge: warningBadge,
     try_message: tryMessage,
     heat,

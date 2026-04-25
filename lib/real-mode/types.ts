@@ -106,6 +106,7 @@ export interface ReplyAnalyzeResult {
   heat_label: ReplyHeatLabel;
   issue_type: ReplyIssueType;
   ai_review: string;
+  why_appeared: string;
   warning_badge: string | null;
   try_message: string;
   heat: number;
@@ -155,11 +156,12 @@ export interface BuyVerdictResult {
   urgency_score: number;
 }
 
-export type UserActionType = "used_try" | "edited_try" | "dismissed" | "sent_original" | "did_not_send";
+export type UserActionType = "used_try" | "edited_try" | "dismissed" | "sent_original" | "did_not_send" | "cooled";
 
 export interface MessageOutcome {
   id: string;
   surface: string; // e.g., "reply", "send", "buy"
+  user_id: string;
   conversation_id: string;
   other_person_name: string;
   user_name: string;
@@ -167,6 +169,7 @@ export interface MessageOutcome {
   latest_incoming_message: string;
   user_draft: string;
   ai_review: string;
+  why_appeared: string;
   warning_badge: string | null;
   reply_type: string;
   issue_type: string;

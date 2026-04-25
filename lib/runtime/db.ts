@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs from "node:fs"; // Triggering restart for DB schema update
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { LedgerEntry, MCPServerConfig } from "@/lib/types/runtime";
@@ -100,6 +100,7 @@ function ensureDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS message_outcomes (
       id TEXT PRIMARY KEY,
       surface TEXT NOT NULL,
+      user_id TEXT NOT NULL,
       conversation_id TEXT NOT NULL,
       other_person_name TEXT NOT NULL,
       user_name TEXT NOT NULL,
@@ -107,6 +108,7 @@ function ensureDb(): DatabaseSync {
       latest_incoming_message TEXT NOT NULL,
       user_draft TEXT NOT NULL,
       ai_review TEXT NOT NULL,
+      why_appeared TEXT NOT NULL,
       warning_badge TEXT,
       reply_type TEXT NOT NULL,
       issue_type TEXT NOT NULL,
@@ -191,12 +193,13 @@ export function persistLedgerEntry(entry: LedgerEntry): void {
   ).run(entry.id, entry.ts, entry.sourceId, entry.mode, entry.action, entry.summary, entry.saved ?? null, entry.heat ?? null, entry.quotient ?? null);
 }
 
-export function getMessageOutcomes(limit = 50): MessageOutcome[] {
+export function getMessageOutcomes(userId: string, limit = 50): MessageOutcome[] {
   const db = ensureDb();
-  const rows = db.prepare("SELECT * FROM message_outcomes ORDER BY timestamp DESC LIMIT ?").all(limit) as any[];
+  const rows = db.prepare("SELECT * FROM message_outcomes WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(userId, limit) as any[];
   return rows.map((row) => ({
     id: row.id,
     surface: row.surface,
+    user_id: row.user_id,
     conversation_id: row.conversation_id,
     other_person_name: row.other_person_name,
     user_name: row.user_name,
@@ -204,6 +207,7 @@ export function getMessageOutcomes(limit = 50): MessageOutcome[] {
     latest_incoming_message: row.latest_incoming_message,
     user_draft: row.user_draft,
     ai_review: row.ai_review,
+    why_appeared: row.why_appeared,
     warning_badge: row.warning_badge,
     reply_type: row.reply_type,
     issue_type: row.issue_type,
@@ -220,15 +224,22 @@ export function persistMessageOutcome(outcome: MessageOutcome): void {
   const db = ensureDb();
   db.prepare(`
     INSERT OR REPLACE INTO message_outcomes (
-      id, surface, conversation_id, other_person_name, user_name, timestamp,
-      latest_incoming_message, user_draft, ai_review, warning_badge,
+      id, surface, user_id, conversation_id, other_person_name, user_name, timestamp,
+      latest_incoming_message, user_draft, ai_review, why_appeared, warning_badge,
       reply_type, issue_type, heat_before, heat_after, try_message,
       final_sent_message, user_action, outcome_summary
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    outcome.id, outcome.surface, outcome.conversation_id, outcome.other_person_name, outcome.user_name, outcome.timestamp,
-    outcome.latest_incoming_message, outcome.user_draft, outcome.ai_review, outcome.warning_badge,
+    outcome.id, outcome.surface, outcome.user_id, outcome.conversation_id, outcome.other_person_name, outcome.user_name, outcome.timestamp,
+    outcome.latest_incoming_message, outcome.user_draft, outcome.ai_review, outcome.why_appeared, outcome.warning_badge,
     outcome.reply_type, outcome.issue_type, outcome.heat_before, outcome.heat_after, outcome.try_message,
     outcome.final_sent_message, outcome.user_action, outcome.outcome_summary
   );
+}
+
+export function validateSession(token: string): boolean {
+  const db = ensureDb();
+  const now = new Date().toISOString();
+  const row = db.prepare("SELECT 1 FROM reply_sessions WHERE token = ? AND expires_at > ?").get(token, now);
+  return !!row;
 }

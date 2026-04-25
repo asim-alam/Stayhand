@@ -92,6 +92,7 @@ const EMPTY_ANALYSIS: ReplyAnalyzeResult = {
   heat_label: "calm",
   issue_type: "none",
   ai_review: "",
+  why_appeared: "",
   warning_badge: null,
   try_message: "",
   heat: 0,
@@ -242,6 +243,7 @@ export default function ReplyPage() {
   }, [session]);
 
   useEffect(() => {
+    if (review) return;
     if (!draft.trim()) {
       setAnalysis(EMPTY_ANALYSIS);
       setShowSoften(false);
@@ -293,7 +295,7 @@ export default function ReplyPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeConversation, draft, messages, user]);
+  }, [activeConversation, draft, messages, user, review]);
 
 
   useEffect(() => {
@@ -414,14 +416,14 @@ export default function ReplyPage() {
     return true;
   }
 
-  async function deliverMessage(body: string, meta: SendMeta, outcome?: MessageOutcome) {
+  async function deliverMessage(body: string, meta: SendMeta, outcomeData?: any) {
     if (!activeId || !body.trim()) return;
     setSending(true);
     try {
       const response = await fetch("/api/reply/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: activeId, body, friction: meta, outcome }),
+        body: JSON.stringify({ conversationId: activeId, body, friction: meta, outcomeData }),
       });
       const data = (await response.json()) as {
         created?: ReplyMessage[];
@@ -440,13 +442,13 @@ export default function ReplyPage() {
     }
   }
 
-  function sendNow(text: string, meta: SendMeta, outcome?: MessageOutcome) {
-    if (maybeRequireReadAloud({ text, meta, outcome })) return;
-    void deliverMessage(text, meta, outcome);
+  function sendNow(text: string, meta: SendMeta, outcomeData?: any) {
+    if (maybeRequireReadAloud({ text, meta, outcome: outcomeData })) return;
+    void deliverMessage(text, meta, outcomeData);
     resetComposer();
   }
 
-  function buildOutcome(action: UserActionType, finalMessage: string): MessageOutcome | undefined {
+  function buildOutcomeData(action: UserActionType) {
     if (!review || !activeConversation) return undefined;
     const otherPartyName = activeConversation.kind === "human"
       ? activeConversation.participants.find((p) => p.type === "user" && p.id !== user?.id)?.displayName || "Unknown"
@@ -455,25 +457,24 @@ export default function ReplyPage() {
     const incoming = [...messages].reverse().find((message) => message.senderId !== user?.id)?.body || "";
       
     return {
-      id: crypto.randomUUID(),
-      surface: "reply",
-      conversation_id: activeId || "",
-      other_person_name: otherPartyName,
-      user_name: user?.displayName || "You",
-      timestamp: new Date().toISOString(),
-      latest_incoming_message: incoming,
-      user_draft: review.original,
-      ai_review: review.analysis.ai_review || review.analysis.guidance || "No review",
-      warning_badge: review.analysis.warning_badge || null,
-      reply_type: review.analysis.reply_type || "other",
-      issue_type: review.analysis.issue_type || "none",
-      heat_before: review.analysis.heat || 0,
-      heat_after: action === "sent_original" ? (review.analysis.heat || 0) : Math.max(0, (review.analysis.heat || 0) - 30),
-      try_message: review.suggestion,
-      final_sent_message: finalMessage,
-      user_action: action,
-      outcome_summary: action === "used_try" ? "User accepted the Try suggestion." : action === "edited_try" ? "User edited the suggestion before sending." : "User sent their original draft despite friction."
+      userAction: action,
+      originalDraft: review.original,
+      reviewData: review.analysis,
+      otherPartyName,
+      latestIncomingMessage: incoming,
     };
+  }
+
+  async function logOutcome(action: UserActionType, finalMessage: string) {
+    if (!review || !activeConversation) return;
+    const outcomeData = buildOutcomeData(action);
+    if (!outcomeData) return;
+
+    await fetch("/api/outcomes/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...outcomeData, finalMessage, conversationId: activeId, surface: "reply" }),
+    });
   }
 
   async function reviewDraft(meta: SendMeta = {}) {
@@ -526,6 +527,10 @@ export default function ReplyPage() {
       sendReviewedDraft();
       return;
     }
+    if (analysis.issue_type === "none" && analysis.heat < 60) {
+      sendNow(text, { heat: analysis.heat, category: analysis.category });
+      return;
+    }
     void reviewDraft({ heat: analysis.heat, category: analysis.category });
   }
 
@@ -538,23 +543,29 @@ export default function ReplyPage() {
   function handleWantsCool() {
     const text = draft.trim();
     if (!text) return;
+    if (review) void logOutcome("cooled", text);
     const delay = Math.max(analysis.recommended_cooldown_seconds || 30, 15);
     setCooling((prev) => [...prev, { id: crypto.randomUUID(), text, sendsAt: Date.now() + delay * 1000 }]);
     resetComposer();
   }
 
+  function handleDismiss() {
+    if (review) void logOutcome("dismissed", draft);
+    setReview(null);
+  }
+
   function sendOriginal() {
     const text = review?.original ?? draft.trim();
     if (!text) return;
-    const outcome = review ? buildOutcome("sent_original", text) : undefined;
-    sendNow(text, { ...(review?.meta ?? {}), sentAnyway: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcome);
+    const outcomeData = review ? buildOutcomeData("sent_original") : undefined;
+    sendNow(text, { ...(review?.meta ?? {}), sentAnyway: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcomeData);
   }
 
   function sendSoftened() {
     const text = review?.suggestion.trim() || analysis.softened.trim();
     if (!text) return;
-    const outcome = review ? buildOutcome("used_try", text) : undefined;
-    sendNow(text, { ...(review?.meta ?? {}), softened: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcome);
+    const outcomeData = review ? buildOutcomeData("used_try") : undefined;
+    sendNow(text, { ...(review?.meta ?? {}), softened: true, heat: review?.analysis.heat ?? analysis.heat, category: review?.analysis.category ?? analysis.category }, outcomeData);
   }
 
   function sendReviewedDraft() {
@@ -562,13 +573,13 @@ export default function ReplyPage() {
     const text = draft.trim();
     if (!text) return;
     const action = text === review.suggestion ? "used_try" : (text === review.original ? "sent_original" : "edited_try");
-    const outcome = buildOutcome(action, text);
+    const outcomeData = buildOutcomeData(action);
     sendNow(text, {
       ...review.meta,
       softened: text !== review.original,
       heat: review.analysis.heat,
       category: review.analysis.category,
-    }, outcome);
+    }, outcomeData);
   }
 
   function applySuggestion() {
@@ -711,6 +722,12 @@ export default function ReplyPage() {
                 </button>
               ))}
             </div>
+            {process.env.NODE_ENV === "development" && (
+              <div style={{ marginTop: 20, padding: 10, background: "rgba(0,0,0,0.5)", fontSize: 10, fontFamily: "monospace", borderRadius: 4, maxHeight: 150, overflow: "auto" }}>
+                <strong>Coach Debug:</strong>
+                <pre style={{ margin: 0 }}>{JSON.stringify(analysis, null, 2)}</pre>
+              </div>
+            )}
           </div>
 
         </aside>
@@ -769,6 +786,9 @@ export default function ReplyPage() {
                   <div className="reply-review-card__header-right">
                     {review && (
                       <>
+                        <span className="reply-coach-badge">
+                          {review.analysis.why_appeared}
+                        </span>
                         <span className={`reply-coach-badge reply-coach-badge--${review.analysis.heat_label}`}>
                           {review.analysis.heat_label}
                         </span>
@@ -782,7 +802,7 @@ export default function ReplyPage() {
                         {review.analysis.heat_trajectory === "rising" ? "↑ rising heat" : "↓ cooling"}
                       </span>
                     )}
-                    <button type="button" className="top-link subtle" onClick={() => setReview(null)}>
+                    <button type="button" className="top-link subtle" onClick={handleDismiss}>
                       dismiss
                     </button>
                   </div>

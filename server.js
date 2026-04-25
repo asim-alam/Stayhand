@@ -32,7 +32,25 @@ app
       const url = new URL(request.url || "", `http://${host}:${port}`);
       const token = url.searchParams.get("session") || "";
       if (!token) {
-        socket.close();
+        socket.close(1008, "Session required");
+        return;
+      }
+
+      // Validate token securely
+      try {
+        const { DatabaseSync } = require("node:sqlite");
+        const path = require("node:path");
+        const dbPath = path.join(process.cwd(), ".appdata", "local.db");
+        const db = new DatabaseSync(dbPath);
+        const now = new Date().toISOString();
+        const row = db.prepare("SELECT 1 FROM reply_sessions WHERE token = ? AND expires_at > ?").get(token, now);
+        if (!row) {
+          socket.close(1008, "Invalid session");
+          return;
+        }
+      } catch (err) {
+        // If DB isn't initialized yet or fails, assume invalid
+        socket.close(1008, "Database error");
         return;
       }
 
